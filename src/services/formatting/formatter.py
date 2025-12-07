@@ -1,8 +1,7 @@
 """Response formatter service with LLM or code-based formatting."""
 
 import logging
-from typing import Dict, Any, Optional
-from azure.identity.aio import DefaultAzureCredential
+from typing import Dict, Any
 
 from src.config.settings import Settings
 from src.orchestrator.state import PipelineState
@@ -11,6 +10,7 @@ from src.infrastructure.llm.factory import (
     is_anthropic_model,
     azure_agent_client,
     create_anthropic_agent,
+    get_shared_credential,
 )
 from src.config.prompts import build_format_prompt
 from src.utils.json_parser import JSONParser
@@ -25,7 +25,6 @@ class ResponseFormatter:
     def __init__(self, settings: Settings):
         """Initialize response formatter."""
         self.settings = settings
-        self._credential: Optional[DefaultAzureCredential] = None
         self.code_formatter = CodeFormatter()
 
     async def format(self, state: PipelineState) -> Dict[str, Any]:
@@ -48,10 +47,6 @@ class ResponseFormatter:
     async def _format_with_llm(self, state: PipelineState) -> Dict[str, Any]:
         """Format response using LLM agent."""
         try:
-            # Get or create credential for Azure
-            if not self._credential:
-                self._credential = DefaultAzureCredential()
-
             # Build input for formatter
             format_input = {
                 "pregunta_original": state.user_message,
@@ -92,8 +87,9 @@ class ResponseFormatter:
                 )
                 response = await run_single_agent(agent, str(format_input))
             else:
+                credential = get_shared_credential()
                 async with azure_agent_client(
-                    self.settings, model, self._credential
+                    self.settings, model, credential
                 ) as client:
                     agent = client.create_agent(
                         name="ResponseFormatter",

@@ -2,15 +2,14 @@
 
 import logging
 from typing import Dict, Any
-from azure.identity.aio import DefaultAzureCredential
 
 from src.config.settings import Settings
 from src.config.prompts import build_intent_system_prompt
-from src.infrastructure.llm.executor import run_single_agent
+from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import (
     azure_agent_client,
+    get_shared_credential,
 )
-from src.utils.json_parser import JSONParser
 from src.services.intent.models import IntentResult
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,6 @@ class IntentClassifier:
     def __init__(self, settings: Settings):
         """Initialize intent classifier."""
         self.settings = settings
-        self._credential = DefaultAzureCredential()
 
     async def classify(self, message: str) -> Dict[str, Any]:
         """
@@ -40,8 +38,9 @@ class IntentClassifier:
             intent_temperature = self.settings.intent_temperature
 
 
+            credential = get_shared_credential()
             async with azure_agent_client(
-                self.settings, model, self._credential
+                self.settings, model, credential
             ) as client:
                 agent = client.create_agent(
                     name="IntentClassifier",
@@ -50,12 +49,23 @@ class IntentClassifier:
                     model=model,
                     max_tokens=intent_max_tokens,
                     temperature=intent_temperature,
-                    response_format=IntentResult
                 )
-                response = await run_single_agent(agent, message)
-
-            result = JSONParser.extract_json(response)
-            return result
+                result_model = await run_agent_with_format(
+                    agent, message, response_format=IntentResult
+                )
+            
+            # Convert Pydantic model to dict
+            if isinstance(result_model, IntentResult):
+                return result_model.model_dump()
+            else:
+                # Fallback if result is not the expected type
+                return {
+                    "user_question": message,
+                    "intent": "error",
+                    "tipo_patron": "error",
+                    "arquetipo": "error",
+                    "razon": "Unexpected response format",
+                }
 
         except Exception as e:
             logger.error(f"Intent classification error: {e}", exc_info=True)

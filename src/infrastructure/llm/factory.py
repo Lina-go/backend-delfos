@@ -9,6 +9,25 @@ from agent_framework.anthropic import AnthropicClient
 
 from src.config.settings import Settings
 
+# Shared credential instance (singleton pattern)
+_shared_credential: DefaultAzureCredential | None = None
+
+
+def get_shared_credential() -> DefaultAzureCredential:
+    """
+    Get or create a shared DefaultAzureCredential instance.
+    
+    This ensures all services use the same credential instance,
+    avoiding duplicate credential creation and improving performance.
+    
+    Returns:
+        Shared DefaultAzureCredential instance
+    """
+    global _shared_credential
+    if _shared_credential is None:
+        _shared_credential = DefaultAzureCredential()
+    return _shared_credential
+
 
 def is_anthropic_model(model: str) -> bool:
     """Check if model is Anthropic (Claude)."""
@@ -44,14 +63,15 @@ def create_anthropic_agent(
     tools: Any | None = None,
     model: str | None = None,
     max_tokens: int = 8192,
-    response_format: Any | None = None,
 ):
     """
     Create an Anthropic (Claude) agent.
     
     Usage:
         agent = create_anthropic_agent(settings, "SQLAgent", prompt, mcp)
-        response = await run_single_agent(agent, input)
+        response = await run_agent_with_format(agent, input, response_format=SQLResult)
+        
+    Note: response_format should be passed to agent.run(), not create_agent().
     """
     client = AnthropicClient(
         model_id=model or settings.sql_agent_model,
@@ -62,5 +82,4 @@ def create_anthropic_agent(
         instructions=instructions,
         tools=tools,
         max_tokens=max_tokens,
-        response_format=response_format,
     )

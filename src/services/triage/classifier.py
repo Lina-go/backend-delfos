@@ -2,8 +2,6 @@
 
 import logging
 from typing import Dict, Any, Optional
-from azure.identity.aio import DefaultAzureCredential
-
 from src.config.settings import Settings
 from src.config.prompts import build_triage_system_prompt
 from src.infrastructure.llm.executor import run_single_agent
@@ -11,6 +9,7 @@ from src.infrastructure.llm.factory import (
     is_anthropic_model,
     azure_agent_client,
     create_anthropic_agent,
+    get_shared_credential,
 )
 from src.utils.json_parser import JSONParser
 
@@ -23,7 +22,6 @@ class TriageClassifier:
     def __init__(self, settings: Settings):
         """Initialize triage classifier."""
         self.settings = settings
-        self._credential: Optional[DefaultAzureCredential] = None
 
     async def classify(self, message: str) -> Dict[str, Any]:
         """
@@ -36,10 +34,6 @@ class TriageClassifier:
             Dictionary with query_type, confidence, and reasoning
         """
         try:
-            # Get or create credential for Azure
-            if not self._credential:
-                self._credential = DefaultAzureCredential()
-
             system_prompt = build_triage_system_prompt()
             model = self.settings.triage_agent_model
 
@@ -54,8 +48,9 @@ class TriageClassifier:
                 )
                 response = await run_single_agent(agent, message)
             else:
+                credential = get_shared_credential()
                 async with azure_agent_client(
-                    self.settings, model, self._credential
+                    self.settings, model, credential
                 ) as client:
                     agent = client.create_agent(
                         name="TriageClassifier",

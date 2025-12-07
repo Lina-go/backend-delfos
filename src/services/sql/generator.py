@@ -2,20 +2,18 @@
 
 import logging
 from typing import Dict, Any, Optional
-from azure.identity.aio import DefaultAzureCredential
 
 from src.config.settings import Settings
 from src.config.prompts import (
     build_sql_generation_system_prompt,
     build_sql_generation_user_input,
 )
-from src.infrastructure.llm.executor import run_single_agent
+from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import (
 
     create_anthropic_agent,
 )
 from src.infrastructure.mcp.client import mcp_connection
-from src.utils.json_parser import JSONParser
 from src.services.sql.models import SQLResult
 
 logger = logging.getLogger(__name__)
@@ -31,7 +29,6 @@ class SQLGenerator:
             settings: Application settings
         """
         self.settings = settings
-        self._credential: Optional[DefaultAzureCredential] = None
 
     async def generate(
         self, 
@@ -74,7 +71,6 @@ class SQLGenerator:
             model = self.settings.sql_agent_model
             sql_max_tokens = self.settings.sql_max_tokens
             sql_temperature = self.settings.sql_temperature
-            sql_format = SQLResult
 
             async with mcp_connection(self.settings) as mcp:
                 agent = create_anthropic_agent(
@@ -84,20 +80,29 @@ class SQLGenerator:
                     tools=mcp,
                     model=model,
                     max_tokens=sql_max_tokens,
-                    temperature=sql_temperature,
-                    response_format=sql_format
                 )
-                response = await run_single_agent(agent, user_message)
-                result = JSONParser.extract_json(response)
-            return result
+                result_model = await run_agent_with_format(
+                    agent, user_message, response_format=SQLResult
+                )
+            
+            # Convert Pydantic model to dict
+            if isinstance(result_model, SQLResult):
+                return result_model.model_dump()
+            else:
+                # Fallback if result is not the expected type
+                return {
+                    "pregunta_original": message,
+                    "sql": "",
+                    "tablas": [],
+                    "resumen": "Error: Unexpected response format",
+                }
 
         except Exception as e:
             logger.error(f"SQL generation error: {e}", exc_info=True)
             return {
+                "pregunta_original": message,
                 "sql": "",
                 "tablas": [],
-                "resultados": [],
-                "total_filas": 0,
                 "resumen": f"Error generating SQL: {str(e)}",
             }
 
