@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-async def retry_with_backoff(
+async def run_with_retry(
     func: Callable[[], Any],
     max_retries: int = 3,
     initial_delay: float = 5.0,

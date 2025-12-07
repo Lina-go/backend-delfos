@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from typing import List, Dict, Any
 from src.config.constants import ChartType
-from src.config.settings import chart_color_palette
+from src.config.settings import Settings
 
 
 def generate_pie_chart(
@@ -22,7 +22,7 @@ def generate_pie_chart(
         Base64 encoded image string
     """
     if colors is None:
-        colors = chart_color_palette
+        colors = Settings.chart_color_palette
     
     labels = [d.get("x_value", "") for d in data_points]
     values = [d.get("y_value", 0) for d in data_points]
