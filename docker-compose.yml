@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - AZURE_AI_PROJECT_ENDPOINT=${AZURE_AI_PROJECT_ENDPOINT}
+      - AZURE_AI_MODEL_DEPLOYMENT_NAME=${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - INTENT_AGENT_MODEL=${INTENT_AGENT_MODEL}
+      - SQL_AGENT_MODEL=${SQL_AGENT_MODEL}
+      - VIZ_AGENT_MODEL=${VIZ_AGENT_MODEL}
+      - FORMAT_AGENT_MODEL=${FORMAT_AGENT_MODEL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_URL=${MCP_SERVER_URL}
+      - MCP_TIMEOUT=${MCP_TIMEOUT}
+      - MCP_SSE_TIMEOUT=${MCP_SSE_TIMEOUT}
+      - MCP_CHART_SERVER_URL=${MCP_CHART_SERVER_URL}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - DEBUG=${DEBUG}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
