@@ -5,7 +5,8 @@ import plotly.express as px
 from typing import List, Dict, Any
 from src.config.constants import ChartType
 from src.config.settings import Settings
-
+import base64
+from io import BytesIO
 
 def generate_pie_chart(
     data_points: List[Dict[str, Any]],
@@ -31,8 +32,6 @@ def generate_pie_chart(
     fig.update_layout(title="Pie Chart")
     
     # Convert to base64
-    import base64
-    from io import BytesIO
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
@@ -43,7 +42,7 @@ def generate_bar_chart(
 ) -> str:
     """Generate a bar chart image."""
     if colors is None:
-        colors = CHART_COLORS
+        colors = Settings.chart_color_palette
     
     x_values = [d.get("x_value", "") for d in data_points]
     y_values = [d.get("y_value", 0) for d in data_points]
@@ -51,8 +50,6 @@ def generate_bar_chart(
     fig = go.Figure(data=[go.Bar(x=x_values, y=y_values, marker_color=colors[0])])
     fig.update_layout(title="Bar Chart")
     
-    import base64
-    from io import BytesIO
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
@@ -63,7 +60,7 @@ def generate_line_chart(
 ) -> str:
     """Generate a line chart image."""
     if colors is None:
-        colors = CHART_COLORS
+        colors = Settings.chart_color_palette
     
     x_values = [d.get("x_value", "") for d in data_points]
     y_values = [d.get("y_value", 0) for d in data_points]
@@ -71,8 +68,6 @@ def generate_line_chart(
     fig = go.Figure(data=[go.Scatter(x=x_values, y=y_values, mode='lines+markers', line_color=colors[0])])
     fig.update_layout(title="Line Chart")
     
-    import base64
-    from io import BytesIO
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
@@ -83,7 +78,7 @@ def generate_stacked_bar_chart(
 ) -> str:
     """Generate a stacked bar chart image."""
     if colors is None:
-        colors = CHART_COLORS
+        colors = Settings.chart_color_palette
     
     # Group by category
     categories = {}
@@ -106,8 +101,6 @@ def generate_stacked_bar_chart(
     
     fig.update_layout(barmode='stack', title="Stacked Bar Chart")
     
-    import base64
-    from io import BytesIO
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
