@@ -63,6 +63,8 @@ class PipelineOrchestrator:
             # Step 2: INTENT
             logger.info(f"{PipelineStep.INTENT.value}: {PipelineStepDescription.INTENT.value}")
             intent_result = await self.intent.classify(message)
+            # IntentResult.model_dump() converts enum to its value (string)
+            # So intent_result["intent"] is already a string like "requiere_visualizacion"
             state.intent = intent_result["intent"]
             state.pattern_type = intent_result.get("tipo_patron")
             state.arquetipo = intent_result.get("arquetipo")

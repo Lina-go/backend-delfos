@@ -42,11 +42,11 @@ class IntentClassifier:
             async with azure_agent_client(
                 self.settings, model, credential
             ) as client:
+                # Note: model is already specified in azure_agent_client
+                # tools=None is not needed (default is no tools)
                 agent = client.create_agent(
                     name="IntentClassifier",
                     instructions=system_prompt,
-                    tools=None,
-                    model=model,
                     max_tokens=intent_max_tokens,
                     temperature=intent_temperature,
                 )

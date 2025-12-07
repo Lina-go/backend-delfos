@@ -26,7 +26,7 @@ class PipelineState:
 
     # Step 4-5: SQL
     sql_query: Optional[str] = None
-    sql_results: Optional[List[Dict[str, Any]]] = None
+    sql_results: Optional[List[Any]] = None  # Can be List[str] from MCP or List[Dict] after parsing
     total_filas: int = 0
     sql_resumen: Optional[str] = None
 

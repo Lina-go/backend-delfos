@@ -236,6 +236,6 @@ class BlobStorageClient:
         if self._client:
             await self._client.close()
             self._client = None
-        if self.credential:
-            await self.credential.close()
-            self.credential = None
+        # Note: Do NOT close self.credential - it's a shared credential
+        # The shared credential is managed by get_shared_credential() and
+        # should only be closed during application shutdown
