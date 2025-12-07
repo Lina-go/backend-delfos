@@ -1,5 +1,6 @@
 """Graph executor agent."""
 
+import base64
 import logging
 from typing import Dict, Any, List
 
@@ -59,8 +60,11 @@ class GraphExecutor:
             storage = BlobStorageClient(self.settings)
             blob_name = f"{run_id}_{chart_type}.png"
             
-            # Convert to bytes if needed
-            image_bytes = image_base64.encode() if isinstance(image_base64, str) else image_base64
+            # Decode base64 to bytes
+            if isinstance(image_base64, str):
+                image_bytes = base64.b64decode(image_base64)
+            else:
+                image_bytes = image_base64
             
             image_url = await storage.upload_blob(
                 container_name=self.settings.azure_storage_container_name or "charts",

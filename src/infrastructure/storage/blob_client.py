@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from azure.storage.blob.aio import BlobServiceClient
+from azure.storage.blob import ContentSettings
 from azure.identity.aio import DefaultAzureCredential
 from azure.core.exceptions import AzureError
 
@@ -105,7 +106,7 @@ class BlobStorageClient:
             # Upload with content type if provided
             upload_kwargs = {"data": data}
             if content_type:
-                upload_kwargs["content_settings"] = {"content_type": content_type}
+                upload_kwargs["content_settings"] = ContentSettings(content_type=content_type)
             
             logger.debug(f"Uploading blob '{blob_name}' to container '{container_name}'")
             await blob_client.upload_blob(**upload_kwargs, overwrite=True)

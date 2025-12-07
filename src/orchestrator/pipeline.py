@@ -64,7 +64,7 @@ class PipelineOrchestrator:
             logger.info(f"{PipelineStep.INTENT.value}: {PipelineStepDescription.INTENT.value}")
             intent_result = await self.intent.classify(message)
             state.intent = intent_result["intent"]
-            state.pattern_type = intent_result.get("pattern_type")
+            state.pattern_type = intent_result.get("tipo_patron")
             state.arquetipo = intent_result.get("arquetipo")
             state.viz_required = state.intent == "requiere_viz"
 

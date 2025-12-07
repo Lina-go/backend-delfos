@@ -6,13 +6,11 @@ from typing import List, Dict, Any, Optional
 
 
 class SQLResult(BaseModel):
-    """Result from SQL execution."""
+    """Result from SQL generation (before execution)."""
 
     pregunta_original: str
     sql: str
     tablas: List[str]
-    resultados: List[Dict[str, Any]]
-    total_filas: int
     resumen: str
 
 

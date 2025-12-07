@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from typing import List, Dict, Any
 from src.config.constants import ChartType
-from src.config.settings import Settings
+from src.config.settings import get_settings
 import base64
 from io import BytesIO
 
@@ -17,13 +17,13 @@ def generate_pie_chart(
     
     Args:
         data_points: List of dicts with x_value, y_value, category
-        colors: Color palette (defaults to CHART_COLORS)
+        colors: Color palette (defaults to settings chart_color_palette)
         
     Returns:
         Base64 encoded image string
     """
     if colors is None:
-        colors = Settings.chart_color_palette
+        colors = get_settings().chart_color_palette
     
     labels = [d.get("x_value", "") for d in data_points]
     values = [d.get("y_value", 0) for d in data_points]
@@ -42,7 +42,7 @@ def generate_bar_chart(
 ) -> str:
     """Generate a bar chart image."""
     if colors is None:
-        colors = Settings.chart_color_palette
+        colors = get_settings().chart_color_palette
     
     x_values = [d.get("x_value", "") for d in data_points]
     y_values = [d.get("y_value", 0) for d in data_points]
@@ -60,7 +60,7 @@ def generate_line_chart(
 ) -> str:
     """Generate a line chart image."""
     if colors is None:
-        colors = Settings.chart_color_palette
+        colors = get_settings().chart_color_palette
     
     x_values = [d.get("x_value", "") for d in data_points]
     y_values = [d.get("y_value", 0) for d in data_points]
@@ -78,7 +78,7 @@ def generate_stacked_bar_chart(
 ) -> str:
     """Generate a stacked bar chart image."""
     if colors is None:
-        colors = Settings.chart_color_palette
+        colors = get_settings().chart_color_palette
     
     # Group by category
     categories = {}

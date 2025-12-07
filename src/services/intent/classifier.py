@@ -60,8 +60,10 @@ class IntentClassifier:
         except Exception as e:
             logger.error(f"Intent classification error: {e}", exc_info=True)
             return {
+                "user_question": message,
                 "intent": "error",
-                "pattern_type": "error",
-                "reasoning": f"Error in classification: {str(e)}",
+                "tipo_patron": "error",
+                "arquetipo": "error",
+                "razon": f"Error in classification: {str(e)}",
             }
 

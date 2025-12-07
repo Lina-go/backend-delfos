@@ -8,7 +8,9 @@ from src.config.constants import Intent, PatternType
 class IntentResult(BaseModel):
     """Result from intent classification."""
 
+    user_question: str
     intent: Intent
-    pattern_type: PatternType
-    reasoning: Optional[str] = None
+    tipo_patron: str  # Pattern type as single letter (A-N)
+    arquetipo: str  # Analytical archetype
+    razon: Optional[str] = None  # Reasoning in Spanish
 
