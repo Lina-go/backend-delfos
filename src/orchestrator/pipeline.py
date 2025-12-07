@@ -37,6 +37,18 @@ class PipelineOrchestrator:
         self.graph = GraphService(settings)
         self.formatter = ResponseFormatter(settings)
 
+    async def close(self):
+        """Close all service connections and cleanup resources."""
+        try:
+            # Close MCP clients
+            if hasattr(self.schema, 'close'):
+                await self.schema.close()
+            if hasattr(self.sql_exec, 'close'):
+                await self.sql_exec.close()
+            logger.info("Pipeline resources closed")
+        except Exception as e:
+            logger.error(f"Error closing pipeline resources: {e}", exc_info=True)
+
     async def process(self, message: str, user_id: str) -> Dict[str, Any]:
         """
         Process a user message through the complete pipeline.

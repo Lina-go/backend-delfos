@@ -30,6 +30,7 @@ async def chat(
     6. Visualization (if needed)
     7. Response formatting
     """
+    orchestrator = None
     try:
         orchestrator = PipelineOrchestrator(settings)
         response = await orchestrator.process(request.message, request.user_id)
@@ -37,6 +38,13 @@ async def chat(
     except Exception as e:
         logger.error(f"Error processing chat request: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Cleanup resources
+        if orchestrator:
+            try:
+                await orchestrator.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Error during cleanup: {cleanup_error}")
 
 
 @router.get("/health", response_model=HealthResponse)

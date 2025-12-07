@@ -45,9 +45,9 @@ async def run_agent_with_format(
     """
     Execute agent with optional structured output (response_format).
     
-    Uses agent.run() directly (not SequentialBuilder) to properly support
-    response_format. Returns Pydantic model from result.value when response_format
-    is provided, otherwise returns string.
+    Uses SequentialBuilder to ensure compatibility with all agent types (including
+    those with MCP tools). Extracts structured output from the response text using
+    JSON parsing and Pydantic validation.
     
     Args:
         agent: Agent instance
@@ -58,12 +58,39 @@ async def run_agent_with_format(
         Pydantic model instance if response_format provided, otherwise str
     """
     async def _execute_agent():
-        if response_format:
-            result = await agent.run(input_text, response_format=response_format)
-            return result.value if hasattr(result, 'value') else result
-        else:
-            result = await agent.run(input_text)
-            return result.value if hasattr(result, 'value') else str(result)
+        workflow = SequentialBuilder().participants([agent]).build()
+        last_text = ""
+        
+        # Try to use agent.run() if available (for agents without tools)
+        if response_format and hasattr(agent, 'run'):
+            try:
+                result = await agent.run(input_text, response_format=response_format)
+                if hasattr(result, 'value'):
+                    return result.value
+                return result
+            except (AttributeError, TypeError):
+                # Fall back to SequentialBuilder if agent.run() doesn't work
+                pass
+        
+        # Use SequentialBuilder (works with all agent types)
+        async for event in workflow.run_stream(input_text):
+            if isinstance(event, WorkflowOutputEvent):
+                for msg in event.data:
+                    if hasattr(msg, "text") and msg.text:
+                        last_text = msg.text
+        
+        # If response_format provided, parse and validate
+        if response_format and last_text:
+            from src.utils.json_parser import JSONParser
+            json_data = JSONParser.extract_json(last_text)
+            if json_data:
+                try:
+                    return response_format(**json_data)
+                except Exception as e:
+                    logger.warning(f"Failed to parse response as {response_format.__name__}: {e}")
+                    return last_text
+        
+        return last_text
     
     # Execute with retry logic for rate limits
     return await run_with_retry(

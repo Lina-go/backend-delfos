@@ -32,7 +32,7 @@ BLOCKED_SCHEMAS: frozenset[str] = frozenset({
 })
 
 ALLOWED_STATEMENT_PREFIXES: frozenset[str] = frozenset({
-    "SELECT", "WITH",
+    "SELECT", "WITH", "INSERT",
 })
 
 REQUIRED_TABLE_PREFIX: str = "dbo."

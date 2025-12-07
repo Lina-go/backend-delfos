@@ -57,7 +57,4 @@ async def shutdown_event():
         logger.info("Shared credential closed")
     except Exception as e:
         logger.error(f"Error closing shared credential: {e}", exc_info=True)
-    
-    # Note: MCP connections are managed via context managers in services
-    # They should be closed automatically when context exits
 

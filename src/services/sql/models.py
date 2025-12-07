@@ -1,6 +1,6 @@
 """SQL service models."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
@@ -20,5 +20,5 @@ class ValidationResult:
 
     is_valid: bool
     errors: List[str]
-    warnings: List[str] = None
+    warnings: List[str] = field(default_factory=list)
 
