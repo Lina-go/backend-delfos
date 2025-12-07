@@ -29,6 +29,18 @@ def get_shared_credential() -> DefaultAzureCredential:
     return _shared_credential
 
 
+async def close_shared_credential():
+    """
+    Close the shared credential instance.
+    
+    Should be called during application shutdown to properly clean up resources.
+    """
+    global _shared_credential
+    if _shared_credential is not None:
+        await _shared_credential.close()
+        _shared_credential = None
+
+
 def is_anthropic_model(model: str) -> bool:
     """Check if model is Anthropic (Claude)."""
     return "claude" in model.lower()

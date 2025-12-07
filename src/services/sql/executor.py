@@ -17,6 +17,11 @@ class SQLExecutor:
         self.settings = settings
         self.mcp_client = MCPClient(settings)
 
+    async def close(self):
+        """Close MCP client connection."""
+        if hasattr(self.mcp_client, 'close'):
+            await self.mcp_client.close()
+
     async def execute(self, sql: str) -> Dict[str, Any]:
         """
         Execute SQL query via MCP.

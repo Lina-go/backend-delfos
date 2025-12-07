@@ -6,6 +6,7 @@ from src.infrastructure.llm.factory import (
     azure_agent_client,
     create_anthropic_agent,
     get_shared_credential,
+    close_shared_credential,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "azure_agent_client",
     "create_anthropic_agent",
     "get_shared_credential",
+    "close_shared_credential",
 ]

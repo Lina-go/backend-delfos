@@ -11,8 +11,8 @@ import re
 BLOCKED_KEYWORDS: frozenset[str] = frozenset({
     # DDL
     "CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME",
-    # DML (write)
-    "INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT",
+    # DML (write) - INSERT is allowed per prompt, only UPDATE/DELETE blocked
+    "UPDATE", "DELETE", "MERGE", "UPSERT",
     # DCL
     "GRANT", "REVOKE", "DENY",
     # Transaction

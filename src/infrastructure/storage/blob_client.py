@@ -5,10 +5,10 @@ from typing import Optional
 
 from azure.storage.blob.aio import BlobServiceClient
 from azure.storage.blob import ContentSettings
-from azure.identity.aio import DefaultAzureCredential
 from azure.core.exceptions import AzureError
 
 from src.config.settings import Settings
+from src.infrastructure.llm.factory import get_shared_credential
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class BlobStorageClient:
             settings: Application settings containing Azure Storage configuration
         """
         self.settings = settings
-        self.credential = DefaultAzureCredential()
+        self.credential = get_shared_credential()
         self._client: Optional[BlobServiceClient] = None
 
     def _get_client(self, account_url: Optional[str] = None) -> BlobServiceClient:

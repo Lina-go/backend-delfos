@@ -1,12 +1,9 @@
 """AI functions for graph generation."""
 
 import plotly.graph_objects as go
-import plotly.express as px
 from typing import List, Dict, Any
-from src.config.constants import ChartType
 from src.config.settings import get_settings
 import base64
-from io import BytesIO
 
 def generate_pie_chart(
     data_points: List[Dict[str, Any]],

@@ -66,7 +66,7 @@ class PipelineOrchestrator:
             state.intent = intent_result["intent"]
             state.pattern_type = intent_result.get("tipo_patron")
             state.arquetipo = intent_result.get("arquetipo")
-            state.viz_required = state.intent == "requiere_viz"
+            state.viz_required = state.intent == "requiere_visualizacion"
 
             # Step 3: SCHEMA
             logger.info(f"{PipelineStep.SCHEMA.value}: {PipelineStepDescription.SCHEMA.value}")

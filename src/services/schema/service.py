@@ -24,6 +24,11 @@ class SchemaService:
         self.table_selector = TableSelector(settings)
         self.mcp_client = MCPClient(settings)
 
+    async def close(self):
+        """Close MCP client connection."""
+        if hasattr(self.mcp_client, 'close'):
+            await self.mcp_client.close()
+
     async def get_schema_context(self, message: str) -> Dict[str, Any]:
         """
         Get schema context for SQL generation.

@@ -55,6 +55,8 @@ class TriageClassifier:
                     agent = client.create_agent(
                         name="TriageClassifier",
                         instructions=system_prompt,
+                        max_tokens=self.settings.triage_max_tokens,
+                        temperature=self.settings.triage_temperature,
                     )
                     response = await run_single_agent(agent, message)
 

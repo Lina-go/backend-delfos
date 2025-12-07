@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config.settings import get_settings
 from src.api.router import router
+from src.infrastructure.llm.factory import close_shared_credential
 
 settings = get_settings()
 
@@ -50,4 +51,13 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("Shutting down Delfos NL2SQL Pipeline")
+    # Close shared credential
+    try:
+        await close_shared_credential()
+        logger.info("Shared credential closed")
+    except Exception as e:
+        logger.error(f"Error closing shared credential: {e}", exc_info=True)
+    
+    # Note: MCP connections are managed via context managers in services
+    # They should be closed automatically when context exits
 
