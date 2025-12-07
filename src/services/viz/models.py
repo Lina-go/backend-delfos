@@ -1,11 +1,11 @@
 """Visualization service models."""
 
 from dataclasses import dataclass
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 
-@dataclass
-class VizResult:
+class VizResult(BaseModel):
     """Result from visualization generation."""
 
     tipo_grafico: str

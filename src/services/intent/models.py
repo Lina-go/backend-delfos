@@ -1,12 +1,11 @@
 """Intent service models."""
 
-from dataclasses import dataclass
+from pydantic import BaseModel
 from typing import Optional
 from src.config.constants import Intent, PatternType
 
 
-@dataclass
-class IntentResult:
+class IntentResult(BaseModel):
     """Result from intent classification."""
 
     intent: Intent

@@ -87,8 +87,8 @@ class SQLGenerator:
                     temperature=sql_temperature,
                     response_format=sql_format
                 )
-            response = await run_single_agent(agent, user_message)
-            result = JSONParser.extract_json(response)
+                response = await run_single_agent(agent, user_message)
+                result = JSONParser.extract_json(response)
             return result
 
         except Exception as e:

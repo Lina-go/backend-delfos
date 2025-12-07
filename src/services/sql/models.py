@@ -1,11 +1,11 @@
 """SQL service models."""
 
 from dataclasses import dataclass
+from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
 
-@dataclass
-class SQLResult:
+class SQLResult(BaseModel):
     """Result from SQL execution."""
 
     pregunta_original: str
