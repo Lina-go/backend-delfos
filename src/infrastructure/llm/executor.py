@@ -62,14 +62,20 @@ async def run_agent_with_format(
         last_text = ""
         
         # Try to use agent.run() if available (for agents without tools)
+        # Note: agent.run() may not exist or have different signature for all agent types
         if response_format and hasattr(agent, 'run'):
             try:
-                result = await agent.run(input_text, response_format=response_format)
-                if hasattr(result, 'value'):
-                    return result.value
-                return result
-            except (AttributeError, TypeError):
+                # Check if run method accepts response_format parameter
+                import inspect
+                sig = inspect.signature(agent.run)
+                if 'response_format' in sig.parameters:
+                    result = await agent.run(input_text, response_format=response_format)
+                    if hasattr(result, 'value'):
+                        return result.value
+                    return result
+            except (AttributeError, TypeError, ValueError) as e:
                 # Fall back to SequentialBuilder if agent.run() doesn't work
+                logger.debug(f"agent.run() not available or incompatible: {e}, using SequentialBuilder")
                 pass
         
         # Use SequentialBuilder (works with all agent types)

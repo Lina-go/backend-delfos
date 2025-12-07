@@ -1,7 +1,7 @@
 """Request/Response models for API endpoints."""
 
 from pydantic import BaseModel, Field
-from typing import Optional, Any, List
+from typing import Optional, List
 
 
 class ChatRequest(BaseModel):

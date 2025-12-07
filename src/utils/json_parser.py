@@ -2,8 +2,11 @@
 JSON Parser utility for extracting JSON from LLM responses.
 """
 import json
+import logging
 import re
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 class JSONParser:
@@ -75,5 +78,8 @@ class JSONParser:
                     return json.loads(match.group(1))
                 except json.JSONDecodeError:
                     pass
+            # Return empty dict as fallback (caller should handle this)
+            # Note: Consider returning None and updating callers if needed
+            logger.warning("JSONParser: Could not extract JSON from text, returning empty dict")
             return {}
 

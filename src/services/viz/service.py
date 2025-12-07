@@ -24,7 +24,7 @@ class VisualizationService:
 
     async def generate(
         self,
-        sql_results: List[Dict[str, Any]],
+        sql_results: List[Any],  # Can be List[str] from MCP or List[Dict] after parsing
         user_id: str,
         question: str,
     ) -> Dict[str, Any]:

@@ -35,6 +35,8 @@ ALLOWED_STATEMENT_PREFIXES: frozenset[str] = frozenset({
     "SELECT", "WITH", "INSERT",
 })
 
+ALLOWED_STATEMENT_NAMES = ", ".join(sorted(ALLOWED_STATEMENT_PREFIXES))  # For error messages
+
 REQUIRED_TABLE_PREFIX: str = "dbo."
 
 # =============================================================================
@@ -75,7 +77,7 @@ def is_sql_safe(sql: str) -> tuple[bool, str | None]:
     
     # 4. Check starts with allowed statement
     if not any(sql_upper.startswith(prefix) for prefix in ALLOWED_STATEMENT_PREFIXES):
-        return False, "Query must start with SELECT or WITH"
+        return False, f"Query must start with one of: {ALLOWED_STATEMENT_NAMES}"
     
     # 5. Check dbo. prefix (if FROM exists)
     if "FROM" in sql_upper and REQUIRED_TABLE_PREFIX.upper() not in sql_upper:
