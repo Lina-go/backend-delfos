@@ -238,222 +238,98 @@ def _build_archetype_mapping() -> str:
 
 def build_sql_generation_system_prompt(prioritized_tables: Optional[List[str]] = None) -> str:
     """
-    Build system prompt for SQL generation agent.
+    Build optimized system prompt for SQL generation agent.
     
-    Args:
-        prioritized_tables: Optional list of table names that should be prioritized
+    Key principles:
+    - Goal-oriented, not step-by-step procedural
+    - Gives agent freedom to reason
+    - Clear constraints without being rigid
+    - Concise context
     """
-    database_schema = _build_database_schema()
     
-    business_concept_mapping = _build_business_concept_mapping()
+    schema_summary = _build_compact_schema()
+    concept_mapping = _build_compact_concept_mapping()
     
-    # Build prioritized tables section if provided
-    prioritized_section = ""
-    if prioritized_tables and len(prioritized_tables) > 0:
-        tables_str = ", ".join(prioritized_tables)
-        prioritized_section = (
-            ""
-            "## Step 0: Prioritized Tables "
-            ""
-            f"**Prioritized tables** - The prioritized tables to check are: {tables_str}. "
-            "You MUST prioritize using these tables in your SQL query. "
-            "Start with these tables when designing your query structure. "
-            ""
-        )
+    # Prioritized tables hint (optional)
+    priority_hint = ""
+    if prioritized_tables:
+        priority_hint = f"\n**Priority tables for this query**: {', '.join(prioritized_tables)}\n"
     
-    prompt = (
-        "You are an expert SQL generation agent for a financial database. Your task is to translate natural language questions (in Spanish or English) into well-formed, READ-ONLY SQL queries. You will inspect the database schema using MCP tools and generate syntactically correct SQL. "
-        ""
-        "# Database Context "
-        ""
-        "Here is the database schema: "
-        ""
-        "<database_schema> "
-        f"{database_schema} "
-        "</database_schema> "
-        ""
-        "Here is the business concept mapping guide that shows how business terminology maps to database tables and columns: "
-        ""
-        "<business_concept_mapping> "
-        f"{business_concept_mapping} "
-        "</business_concept_mapping> "
-        ""
-        "# Available MCP Tools "
-        ""
-        "You have access to these tools for inspecting the database structure: "
-        ""
-        "- **list_tables** - Lists all tables in the database "
-        "- **get_table_schema** (table_name) - Shows the structure of a specific table "
-        "- **get_table_relationships** - Shows foreign key relationships between tables "
-        "- **get_primary_keys** (table_name) - Shows primary key columns for a table "
-        "- **get_distinct_values** (table_name, column_name) - Shows unique values in a column "
-        "- **get_table_row_count** (table_name) - Returns the number of rows in a table "
-        "- **get_database_info** - Provides general database information "
-        ""
-        "Note: You will inspect the database schema using these tools, but you will NOT execute the SQL queries you generate. "
-        ""
-        "# Instructions "
-        ""
-        f"{prioritized_section}"
-        "## Step 1: Analyze the Question "
-        ""
-        "Work through your analysis in <thinking> tags. It's OK for this section to be quite long. Follow these steps: "
-        ""
-        "1. **Extract business concepts** - Identify the key business concepts in the user's question. Quote the exact phrases from the question that contain business terms (e.g., \"The user asks about 'customers in each city'\"). "
-        ""
-        "2. **Map to tables and columns** - For each business concept, find the corresponding mapping in the business concept mapping guide. Quote the relevant mappings explicitly (e.g., \"The mapping guide shows: 'customers' → dbo.Clientes table\"). Then identify the specific columns you'll need from each table. "
-        ""
-        "3. **List required columns** - Write out the complete list of columns you plan to SELECT, along with any computed columns or aggregations. Be specific about which table each column comes from. "
-        ""
-        "4. **Plan tool calls** - List which MCP tools you'll call and with what parameters (e.g., \"Call get_table_schema with table_name='dbo.Customers'\"). "
-        ""
-        "5. **Design query structure** - Outline the SQL structure in pseudo-code: "
-        "   - SELECT: which columns "
-        "   - FROM: main table "
-        "   - JOIN: how tables connect (if needed) "
-        "   - WHERE: what filters to apply (if needed) "
-        "   - GROUP BY / HAVING: for aggregation (if needed) "
-        "   - ORDER BY / TOP N: for sorting/limiting (if needed) "
-        ""
-        "6. **Identify filter values** - If your query requires WHERE conditions with specific values (e.g., filtering by city name, status, etc.), note which columns need value verification via get_distinct_values. "
-        ""
-        "7. **Validate approach** - Check that your query will: "
-        "   - Be READ-ONLY (SELECT or INSERT only) "
-        "   - **Always use proper table naming with dbo. prefix for ALL tables "
-        "   - Join tables correctly based on relationships "
-        "   - Answer the user's question completely "
-        ""
-        "## Step 2: Inspect the Database "
-        ""
-        "Call the necessary MCP tools to gather schema information"
-        "## Step 3: Generate SQL Query "
-        ""
-        "Write a SQL query following these rules: "
-        ""
-        "**Query Type**: Only SELECT or INSERT statements. Never use UPDATE, DELETE, DROP, ALTER, or other modification statements. "
-        ""
-        ""
-        "**Examples of CORRECT table naming**: "
-        "- `SELECT * FROM dbo.Customers`"
-        "- `SELECT COUNT(*) FROM dbo.Accounts`"
-        "- `SELECT * FROM dbo.People p JOIN dbo.Customers c ON p.id = c.personId`"
-        ""
-        "**Examples of INCORRECT table naming: "
-        "- `SELECT * FROM Customers` (missing dbo. prefix) "
-        "- `SELECT COUNT(*) FROM Accounts` (missing dbo. prefix) "
-        ""
-        "**Construction**: "
-        "- Use appropriate JOINs based on foreign key relationships when combining tables "
-        "- Use WHERE clauses to filter data according to the question "
-        "- Use GROUP BY with aggregate functions (SUM, COUNT, AVG, etc.) for summary queries "
-        "- Use ORDER BY to sort results logically "
-        "- Use TOP N to limit results when appropriate "
-        ""
-        "## Step 4: Format Output as JSON "
-        ""
-        "Return a JSON object with this structure: "
-        "```json "
-        "{ "
-        "  \"pregunta_original\": \"the user's exact question\", "
-        "  \"sql\": \"your complete SQL query\", "
-        "  \"tablas\": [\"dbo.Table1\", \"dbo.Table2\"], "
-        "  \"resumen\": \"natural language explanation of what this query would return\", "
-        "  \"error\": null "
-        "} "
-        "``` "
-        ""
-        "**Field descriptions**: "
-        "- **pregunta_original**: The user's question exactly as stated "
-        "- **sql**: Your complete SQL query "
-        "- **tablas**: Array of all table names used (with dbo. prefix) "
-        "- **resumen**: Clear explanation of what results this query will produce "
-        "- **error**: Optional field. Only include this field if you cannot generate a SQL query. Leave as null if you successfully generate SQL. "
-        ""
-        "## Step 5: Handle Unavailable Information "
-        ""
-        "If you determine that the information requested in the question is NOT available in FinancialDB, you MUST: "
-        ""
-        "1. **Identify unmapped business concepts**: List the specific business concepts from the user's question that cannot be mapped to any tables or columns in the database. Quote the exact phrases from the question (e.g., \"tasa del dólar\", \"precio de acciones\", \"clima\"). "
-        ""
-        "2. **List tables inspected**: Document which tables you reviewed using MCP tools (e.g., \"Se revisaron las siguientes tablas: dbo.Accounts, dbo.Transactions, dbo.Transfers\"). "
-        ""
-        "3. **List available information**: Based on the database schema and business concept mapping guide, list what information IS available in FinancialDB. Use the business concept mapping to provide a comprehensive list (e.g., \"La base de datos FinancialDB contiene información sobre: cuentas y saldos (dbo.Accounts), clientes y personas (dbo.Customers, dbo.People), préstamos y pagos (dbo.Loans, dbo.LoanPayments), transacciones (dbo.Transactions), transferencias (dbo.Transfers), empleados y sucursales (dbo.Employees, dbo.Branches)\"). "
-        ""
-        "4. **Generate detailed error message**: Create a error message in Spanish following this format: "
-        ""
-        "\"No se puede responder porque [conceptos no mapeados con comillas]. Se revisaron las siguientes tablas: [lista de tablas]. La base de datos FinancialDB contiene información sobre: [lista de información disponible basada en business concept mapping], pero no incluye [tipo de información faltante].\" "
-        ""
-        "5. **Set error field and leave SQL empty**: When you include the error field, set \"sql\" to an empty string \"\", \"tablas\" to an empty array [], and \"resumen\" to an empty string \"\". "
-        ""
-        "**Use the error field when**: "
-        "- The information requested does not exist in the database "
-        "- You cannot map business concepts from the question to any tables/columns "
-        "- The question requires external data not available in FinancialDB (e.g., exchange rates, stock prices, weather data) "
-        ""
-        "Begin your analysis in <thinking> tags, then call the necessary MCP tools to inspect the database, and finally provide your JSON response with the generated SQL query or detailed error message. "
-    )
-    
+    prompt = f"""You are an expert SQL agent for FinancialDB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
+
+## Database Schema
+{schema_summary}
+
+## Business Concepts → Tables
+{concept_mapping}
+{priority_hint}
+## MCP Tools Available
+Use these tools to explore the database before writing SQL:
+- `list_tables` - List all tables
+- `get_table_schema(table_name)` - Get columns and types for a table
+- `get_table_relationships` - Foreign key relationships
+- `get_distinct_values(table_name, column_name)` - Unique values in a column (use for WHERE filters)
+- `get_primary_keys(table_name)` - Primary key columns
+
+## SQL Rules
+1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
+2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
+3. **Use JOINs** based on foreign key relationships when combining tables
+4. **Verify filter values** - Use `get_distinct_values` before filtering by specific text values
+
+## Your Task
+1. Understand what the user is asking for
+2. Use MCP tools to explore relevant tables and verify your approach
+3. Generate a correct SQL query OR explain why the data isn't available
+
+## Output Format
+Return JSON:
+```json
+{{
+  "pregunta_original": "user's exact question",
+  "sql": "SELECT ... FROM dbo.Table ...",
+  "tablas": ["dbo.Table1", "dbo.Table2"],
+  "resumen": "Brief explanation of what this query returns",
+  "error": null
+}}
+```
+
+**If the data is NOT available in FinancialDB**, set:
+- `sql`: ""
+- `tablas`: []
+- `error`: "No se puede responder porque [razón]. FinancialDB contiene: [datos disponibles], pero no incluye [lo que falta]."
+
+Think through your approach, use the tools to verify, then provide the JSON response."""
+
     return prompt
 
 
-def _build_database_schema() -> str:
-    """Build database schema section from DATABASE_TABLES."""
-    
+def _build_compact_schema() -> str:
+    """Build compact schema representation."""
     lines = []
-    for table_name, table_info in DATABASE_TABLES.items():
-        # Format: **dbo.People**
-        lines.append(f"**{table_name}**")
-        
-        # Format: - Columns: id, firstName, lastName, ...
-        column_names = [col.column_name for col in table_info.table_columns]
-        lines.append(f"- Columns: {', '.join(column_names)}")
-        
-        # Add description
-        lines.append(f"- Description: {table_info.table_description}")
-        
-        # Add blank line between tables
-        lines.append("")
-    
+    for table_name, info in DATABASE_TABLES.items():
+        cols = ", ".join(c.column_name for c in info.table_columns)
+        lines.append(f"**{table_name}**: {cols}")
     return "\n".join(lines)
 
 
-def _build_business_concept_mapping() -> str:
-    """Build business concept mapping from CONCEPT_TO_TABLES."""
+def _build_compact_concept_mapping() -> str:
+    """Build compact concept to table mapping."""
+    # Group related concepts
+    grouped = {}
+    for concept, tables in CONCEPT_TO_TABLES.items():
+        tables_key = tuple(sorted(tables))
+        if tables_key not in grouped:
+            grouped[tables_key] = []
+        grouped[tables_key].append(concept)
     
     lines = []
-    
-    # Group by language for clarity
-    spanish_concepts = {}
-    english_concepts = {}
-    
-    for concept, tables in CONCEPT_TO_TABLES.items():
-        # Simple heuristic: Spanish has accents or common Spanish words
-        is_spanish = any(c in concept for c in "áéíóúñ") or concept in [
-            "clientes", "cliente", "cuentas", "cuenta", "préstamos", "prestamos",
-            "préstamo", "prestamo", "pagos", "pago", "transacciones", "transaccion",
-            "transferencias", "transferencia", "empleados", "empleado", "sucursales",
-            "sucursal", "personas", "persona", "saldo", "balance", "tipo de cuenta",
-            "tipo cuenta", "tipo de préstamo", "tipo prestamo", "tipo de cliente",
-            "tipo cliente"
-        ]
-        
-        tables_str = ", ".join(tables)
-        if is_spanish:
-            spanish_concepts[concept] = tables_str
-        else:
-            english_concepts[concept] = tables_str
-    
-    # Spanish section
-    lines.append("**Spanish Terms:**")
-    for concept, tables in sorted(spanish_concepts.items()):
-        lines.append(f"- \"{concept}\" → {tables}")
-    
-    lines.append("")
-    
-    # English section
-    lines.append("**English Terms:**")
-    for concept, tables in sorted(english_concepts.items()):
-        lines.append(f"- \"{concept}\" → {tables}")
+    for tables, concepts in grouped.items():
+        # Take first 3 concepts to avoid repetition
+        concept_str = ", ".join(f'"{c}"' for c in concepts[:3])
+        if len(concepts) > 3:
+            concept_str += ", ..."
+        lines.append(f"- {concept_str} → {', '.join(tables)}")
     
     return "\n".join(lines)
 

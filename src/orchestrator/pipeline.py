@@ -199,7 +199,7 @@ class PipelineOrchestrator:
                 if sql_error and not state.sql_query:
                     logger.warning(f"SQLGenerator could not generate query: {sql_error}")
                     error_response = {
-                        "patron": "error",
+                        "patron": state.pattern_type,
                         "datos": [],
                         "arquetipo": state.arquetipo,
                         "visualizacion": "NO",
