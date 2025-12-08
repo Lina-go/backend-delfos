@@ -39,17 +39,15 @@ class IntentClassifier:
 
 
             credential = get_shared_credential()
-            # IntentClassifier doesn't use tools, only needs 1-2 iterations
             async with azure_agent_client(
                 self.settings, model, credential, max_iterations=2
             ) as client:
-                # Note: model is already specified in azure_agent_client
-                # tools=None is not needed (default is no tools)
                 agent = client.create_agent(
                     name="IntentClassifier",
                     instructions=system_prompt,
                     max_tokens=intent_max_tokens,
                     temperature=intent_temperature,
+                    response_format=IntentResult,
                 )
                 result_model = await run_agent_with_format(
                     agent, message, response_format=IntentResult
@@ -57,8 +55,18 @@ class IntentClassifier:
             
             # Convert Pydantic model to dict
             if not isinstance(result_model, IntentResult):
-                logger.error(f"Unexpected response format from intent classifier: {type(result_model)}")
-                raise ValueError(f"Expected IntentResult, got {type(result_model)}")
+                # Try to recover if the agent returned raw text
+                if isinstance(result_model, str):
+                    from src.utils.json_parser import JSONParser
+                    json_data = JSONParser.extract_json(result_model)
+                    if json_data:
+                        try:
+                            result_model = IntentResult(**json_data)
+                        except Exception as e:
+                            logger.error(f"Failed to parse IntentResult from extracted JSON: {e}")
+                if not isinstance(result_model, IntentResult):
+                    logger.error(f"Unexpected response format from intent classifier: {type(result_model)}")
+                    raise ValueError(f"Expected IntentResult, got {type(result_model)}")
             
             return result_model.model_dump()
 

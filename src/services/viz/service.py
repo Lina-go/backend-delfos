@@ -5,11 +5,12 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from src.config.settings import Settings
-from src.infrastructure.llm.executor import run_single_agent
+from src.infrastructure.llm.executor import run_single_agent, run_agent_with_format
 from src.infrastructure.llm.factory import azure_agent_client, get_shared_credential
 from src.infrastructure.mcp.client import mcp_connection
 from src.config.prompts import build_viz_prompt
 from src.utils.json_parser import JSONParser
+from src.services.viz.models import VizResult
 
 
 
@@ -69,7 +70,6 @@ class VisualizationService:
             viz_temperature = self.settings.viz_temperature
 
             # Create agent with restricted MCP tools
-            # VisualizationService only needs these 2 tools: insert_agent_output_batch + generate_powerbi_url
             viz_tools = [
                 "insert_agent_output_batch",
                 "generate_powerbi_url",
@@ -86,37 +86,52 @@ class VisualizationService:
                         tools=mcp,
                         max_tokens=viz_max_tokens,
                         temperature=viz_temperature,
+                        response_format=VizResult,  # enforce structured output if supported
                     )
                     input_json = json.dumps(viz_input, ensure_ascii=False, indent=2)
                     logger.info(f"VisualizationService input JSON: {input_json[:1000]}...")  # Log first 1000 chars
                     
-                    # Use run_single_agent like in workflow.py (no response_format)
-                    raw_viz_result = await run_single_agent(agent, input_json)
-                    logger.info(f"VisualizationService raw result (length: {len(raw_viz_result)}): {raw_viz_result[:500]}...")
-                    
-                    # Extract JSON manually like in workflow.py
-                    viz_json = JSONParser.extract_json(raw_viz_result)
-                    logger.info(f"VisualizationService extracted JSON: {json.dumps(viz_json, indent=2, ensure_ascii=False) if viz_json else 'None'}")
-                    
-                    if viz_json:
-                        # Ensure all fields have defaults
-                        viz_json.setdefault("tipo_grafico", None)
-                        viz_json.setdefault("metric_name", None)
-                        viz_json.setdefault("data_points", [])
-                        viz_json.setdefault("powerbi_url", None)
-                        viz_json.setdefault("run_id", None)
-                        viz_json.setdefault("image_url", None)
-                        return viz_json
+                    # Prefer structured output via response_format
+                    viz_result = await run_agent_with_format(
+                        agent, input_json, response_format=VizResult
+                    )
+
+                    # If parsing failed, fallback to manual JSON extraction
+                    if isinstance(viz_result, VizResult):
+                        viz_dict = viz_result.model_dump()
+                        logger.info(f"VisualizationService result (parsed): {json.dumps(viz_dict, indent=2, ensure_ascii=False)}")
+                        return viz_dict
                     else:
-                        logger.warning("VisualizationService: Could not extract JSON from agent response")
-                        return {
-                            "tipo_grafico": None,
-                            "metric_name": None,
-                            "data_points": [],
-                            "powerbi_url": None,
-                            "run_id": None,
-                            "image_url": None,
-                        }
+                        # Some clients return an AgentRunResponse; try common fields before str()
+                        raw_viz_result = ""
+                        for attr in ["text", "value", "output", "output_text", "content"]:
+                            raw_viz_result = getattr(viz_result, attr, "") or ""
+                            if raw_viz_result:
+                                break
+                        if not raw_viz_result:
+                            raw_viz_result = viz_result if isinstance(viz_result, str) else str(viz_result)
+                        logger.info(f"VisualizationService raw result (length: {len(raw_viz_result)}): {raw_viz_result[:500]}...")
+                        viz_json = JSONParser.extract_json(raw_viz_result) if raw_viz_result else None
+                        logger.info(f"VisualizationService extracted JSON: {json.dumps(viz_json, indent=2, ensure_ascii=False) if viz_json else 'None'}")
+                        
+                        if viz_json:
+                            viz_json.setdefault("tipo_grafico", None)
+                            viz_json.setdefault("metric_name", None)
+                            viz_json.setdefault("data_points", [])
+                            viz_json.setdefault("powerbi_url", None)
+                            viz_json.setdefault("run_id", None)
+                            viz_json.setdefault("image_url", None)
+                            return viz_json
+                        else:
+                            logger.warning("VisualizationService: Could not extract JSON from agent response")
+                            return {
+                                "tipo_grafico": None,
+                                "metric_name": None,
+                                "data_points": [],
+                                "powerbi_url": None,
+                                "run_id": None,
+                                "image_url": None,
+                            }
 
         except Exception as e:
             logger.error(f"Visualization error: {e}", exc_info=True)

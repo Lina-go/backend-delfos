@@ -57,7 +57,6 @@ class Settings(BaseSettings):
     sql_max_tokens: int = 4096
 
     # SQL Executor Agent
-    # Uses azure_agent_client() - must be Azure model
     sql_executor_agent_model: str = "gpt-4o-mini"
     sql_executor_temperature: float = 0.0
     sql_executor_max_tokens: int = 4096

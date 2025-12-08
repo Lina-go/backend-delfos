@@ -54,29 +54,15 @@ async def azure_agent_client(
     max_iterations: int = 5,
 ):
     """
-    Azure AI agent client as context manager.
+    Azure AI (Foundry) agent client as context manager.
     
-    Configures function_invocation_configuration to prevent infinite loops
-    by limiting the number of tool call iterations.
-    
-    Usage:
-        async with azure_agent_client(settings, model, credential) as client:
-            agent = client.create_agent(name="X", instructions="...")
-            response = await run_single_agent(agent, input)
-    
-    Args:
-        settings: Application settings
-        model: Model deployment name
-        credential: Azure credential
-        max_iterations: Maximum number of tool call iterations (default: 5)
-                        This prevents infinite loops when agents call tools repeatedly
+    The `model` argument must be the deployment name configured in your project.
     """
     async with AzureAIAgentClient(
         project_endpoint=settings.azure_ai_project_endpoint,
         model_deployment_name=model,
         async_credential=credential,
     ) as client:
-        # Configure function invocation to prevent infinite loops
         if client.function_invocation_configuration is not None:
             client.function_invocation_configuration.max_iterations = max_iterations
             client.function_invocation_configuration.include_detailed_errors = True
