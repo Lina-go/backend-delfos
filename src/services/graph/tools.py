@@ -18,7 +18,7 @@ config_params={           # muestra el logo (opcional)
 def _apply_styling(fig: go.Figure, title: str) -> None:
     """Apply shared styling similar to plotly_blob_demo."""
     fig.update_layout(
-        title=title,
+        title=f"<b>{title}</b>",  # HTML bold
         title_font={"color": "black", "size": 16, "family": "Inter, Arial, sans-serif"},
         template="plotly_white",
         hovermode="x unified",
