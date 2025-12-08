@@ -27,6 +27,7 @@ class GraphExecutor:
         run_id: str,
         chart_type: str,
         data_points: List[Dict[str, Any]],
+        title: str,
     ) -> Dict[str, Any]:
         """
         Generate graph image using local tools.
@@ -35,7 +36,7 @@ class GraphExecutor:
             run_id: Run ID from VizAgent
             chart_type: Chart type (pie, bar, line, stackedbar)
             data_points: Data points for the chart
-            
+            title: Title of the graph
         Returns:
             Dictionary with image_url
         """

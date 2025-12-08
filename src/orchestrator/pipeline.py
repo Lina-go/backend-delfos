@@ -410,6 +410,7 @@ class PipelineOrchestrator:
                             run_id=viz_result.get("run_id"),
                             chart_type=viz_result.get("tipo_grafico"),
                             data_points=viz_result.get("data_points", []),
+                            title=state.user_message,
                         )
                         execution_time = (time.time() - start_time) * 1000
                         state.image_url = graph_result.image_url

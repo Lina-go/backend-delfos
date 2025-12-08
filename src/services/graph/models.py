@@ -12,6 +12,7 @@ class GraphResult:
     chart_type: str
     run_id: Optional[str] = None
     blob_url: Optional[str] = None
+    title: Optional[str] = None
 
 
 @dataclass

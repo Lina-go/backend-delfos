@@ -23,6 +23,7 @@ class GraphService:
         run_id: str,
         chart_type: str,
         data_points: List[Dict[str, Any]],
+        title: str,
     ) -> GraphResult:
         """
         Generate graph image.
@@ -31,6 +32,7 @@ class GraphService:
             run_id: Run ID from VizAgent
             chart_type: Chart type
             data_points: Data points
+            title: Title of the graph
             
         Returns:
             GraphResult with image URL
@@ -40,12 +42,14 @@ class GraphService:
                 run_id=run_id,
                 chart_type=chart_type,
                 data_points=data_points,
+                title=title,
             )
             
             return GraphResult(
                 image_url=result["image_url"],
                 chart_type=chart_type,
                 run_id=run_id,
+                title=title,
             )
 
         except Exception as e:

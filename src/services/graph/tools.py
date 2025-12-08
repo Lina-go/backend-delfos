@@ -7,6 +7,7 @@ import base64
 
 def generate_pie_chart(
     data_points: List[Dict[str, Any]],
+    title: str,
     colors: List[str] = None,
 ) -> str:
     """
@@ -27,6 +28,7 @@ def generate_pie_chart(
     
     fig = go.Figure(data=[go.Pie(labels=labels, values=values, marker_colors=colors[:len(labels)])])
     fig.update_layout(title="Pie Chart")
+    fig.update_layout(title=title)
     
     # Convert to base64
     img_bytes = fig.to_image(format="png")
@@ -35,6 +37,7 @@ def generate_pie_chart(
 
 def generate_bar_chart(
     data_points: List[Dict[str, Any]],
+    title: str,
     colors: List[str] = None,
 ) -> str:
     """Generate a bar chart image."""
@@ -46,13 +49,15 @@ def generate_bar_chart(
     
     fig = go.Figure(data=[go.Bar(x=x_values, y=y_values, marker_color=colors[0])])
     fig.update_layout(title="Bar Chart")
-    
+    fig.update_layout(title=title)
+
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
 
 def generate_line_chart(
     data_points: List[Dict[str, Any]],
+    title: str,
     colors: List[str] = None,
 ) -> str:
     """Generate a line chart image."""
@@ -64,13 +69,14 @@ def generate_line_chart(
     
     fig = go.Figure(data=[go.Scatter(x=x_values, y=y_values, mode='lines+markers', line_color=colors[0])])
     fig.update_layout(title="Line Chart")
-    
+    fig.update_layout(title=title)
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
 
 def generate_stacked_bar_chart(
     data_points: List[Dict[str, Any]],
+    title: str,
     colors: List[str] = None,
 ) -> str:
     """Generate a stacked bar chart image."""
@@ -97,7 +103,7 @@ def generate_stacked_bar_chart(
         ))
     
     fig.update_layout(barmode='stack', title="Stacked Bar Chart")
-    
+    fig.update_layout(title=title)
     img_bytes = fig.to_image(format="png")
     return base64.b64encode(img_bytes).decode()
 
