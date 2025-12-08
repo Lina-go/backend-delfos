@@ -5,13 +5,11 @@ import logging
 from typing import Any, TypeVar, Optional, Type
 from pydantic import BaseModel
 
-# Importamos la utilidad de reintento
 from src.utils.retry import run_with_retry
 from src.utils.json_parser import JSONParser
 
 logger = logging.getLogger(__name__)
 
-# Definimos el tipo genérico para modelos Pydantic
 T = TypeVar("T", bound=BaseModel)
 
 async def run_single_agent(agent: Any, input_text: str) -> str:
@@ -30,7 +28,6 @@ async def run_single_agent(agent: Any, input_text: str) -> str:
         logger.info("--------------------------------")
         return response.text
     
-    # Ejecutamos con lógica de reintento para rate limits
     return await run_with_retry(
         _execute_agent,
         max_retries=2,  
@@ -60,21 +57,12 @@ async def run_agent_with_format(
         text_result = response.text 
 
         if response_format and text_result:
-
-            
             json_data = JSONParser.extract_json(text_result)
             
             if json_data:
-                try:
-                    return response_format(**json_data)
-                except Exception as e:
-                    logger.warning(f"Error al parsear respuesta como {response_format.__name__}: {e}")
-                    return text_result
-            else:
-                logger.warning("No se encontró JSON válido en la respuesta")
-        
+                return response_format(**json_data)
         return text_result
-    
+
     return await run_with_retry(
         _execute_agent,
         max_retries=2,

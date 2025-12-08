@@ -80,25 +80,41 @@ class PipelineOrchestrator:
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
         try:
+            ##################################################################################
             # Step 1: TRIAGE
+            ##################################################################################
+
+            # Build the triage prompt
             logger.info(f"{PipelineStep.TRIAGE.value}: {PipelineStepDescription.TRIAGE.value}")
             triage_prompt = build_triage_system_prompt()
+
+            # Execute the triage
             start_time = time.time()
             triage_result = await self.triage.classify(message)
             execution_time = (time.time() - start_time) * 1000
             
-            # Validate triage_result has required fields
+            # Validate the triage result
             if not triage_result or "query_type" not in triage_result:
                 logger.error(
                     f"TriageClassifier returned invalid result: {triage_result}. "
                     "Defaulting to data_question."
                 )
-                triage_result = {
-                    "query_type": "data_question",
-                    "reasoning": "Error parsing triage result, defaulting to data_question",
+                return {
+                    "patron": "NA",
+                    "datos": [{"NA": {}}],
+                    "arquetipo": "NA",
+                    "visualizacion": "NA",
+                    "tipo_grafica": "NA",
+                    "imagen": "NA",
+                    "link_power_bi": "NA",
+                    "insight": "",
+                    "error": "Error parsing triage result, defaulting to data_question",
                 }
-            
+
+            # Set the state
             state.query_type = triage_result["query_type"]
+
+            # Log the triage result
             self.session_logger.log_agent_response(
                 agent_name="TriageClassifier",
                 raw_response=json.dumps(triage_result, indent=2, ensure_ascii=False),
@@ -108,8 +124,8 @@ class PipelineOrchestrator:
                 execution_time_ms=execution_time,
             )
 
+            # Return early for non-data questions
             if state.query_type != "data_question":
-                # Return early for non-data questions
                 response = self._format_non_data_response(state, triage_result)
                 self.session_logger.end_session(
                     success=True,
@@ -118,13 +134,18 @@ class PipelineOrchestrator:
                 )
                 return response
 
+            ##################################################################################
             # Step 2: INTENT
+            ##################################################################################
+
+            # Build the intent prompt
             logger.info(f"{PipelineStep.INTENT.value}: {PipelineStepDescription.INTENT.value}")
             intent_prompt = build_intent_system_prompt()
             start_time = time.time()
             intent_result = await self.intent.classify(message)
             execution_time = (time.time() - start_time) * 1000
 
+            # Set the state
             state.intent = intent_result["intent"]
             state.pattern_type = intent_result.get("tipo_patron")
             state.arquetipo = intent_result.get("arquetipo")
@@ -137,8 +158,22 @@ class PipelineOrchestrator:
                 system_prompt=intent_prompt,
                 execution_time_ms=execution_time,
             )
-
+            
+            # Return early for non COMPARACION questions
+            if state.pattern_type != "comparacion":
+                response = self._format_non_comparacion_response(state, intent_result)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=errors,
+                )
+                return response
+            
+            ##################################################################################
             # Step 3: SCHEMA
+            ##################################################################################
+
+            # Build the schema prompt
             logger.info(f"{PipelineStep.SCHEMA.value}: {PipelineStepDescription.SCHEMA.value}")
             start_time = time.time()
             schema_result = await self.schema.get_schema_context(message)
@@ -153,7 +188,11 @@ class PipelineOrchestrator:
                 execution_time_ms=execution_time,
             )
 
-            # Step 4: SQL_GENERATION with auto-correction loop
+            ##################################################################################
+            # Step 4: SQL_GENERATION
+            ##################################################################################
+
+            # Build the sql generation prompt
             logger.info(f"{PipelineStep.SQL_GENERATION.value}: {PipelineStepDescription.SQL_GENERATION.value}")
             max_sql_retries = 2
             sql_result = None
@@ -217,7 +256,11 @@ class PipelineOrchestrator:
                     )
                     return error_response
                 
+                ##################################################################################
                 # Step 5: SQL_VALIDATION
+                ##################################################################################
+
+                # Build the sql validation prompt
                 logger.info(f"{PipelineStep.SQL_VALIDATION.value}: {PipelineStepDescription.SQL_VALIDATION.value}")
                 start_time = time.time()
                 validation_result = self.sql_validation.validate(state.sql_query)
@@ -263,7 +306,11 @@ class PipelineOrchestrator:
                         )
                         return error_response
 
+            ##################################################################################
             # Step 6: SQL_EXECUTION
+            ##################################################################################
+
+            # Build the sql execution prompt
             logger.info(f"{PipelineStep.SQL_EXECUTION.value}: {PipelineStepDescription.SQL_EXECUTION.value}")
             sql_exec_prompt = build_sql_execution_system_prompt()
             start_time = time.time()
@@ -282,7 +329,11 @@ class PipelineOrchestrator:
                 execution_time_ms=execution_time,
             )
 
+            ##################################################################################
             # Step 7: VERIFICATION
+            ##################################################################################
+
+            # Build the verification prompt
             logger.info(f"{PipelineStep.VERIFICATION.value}: {PipelineStepDescription.VERIFICATION.value}")
             verification_prompt = build_verification_system_prompt() if self.settings.use_llm_verification else None
             start_time = time.time()
@@ -300,7 +351,11 @@ class PipelineOrchestrator:
                 execution_time_ms=execution_time,
             )
 
+            ##################################################################################
             # Step 8: VIZ
+            ##################################################################################
+
+            # Build the viz prompt
             if state.viz_required and state.sql_results:
                 logger.info(f"{PipelineStep.VIZ.value}: {PipelineStepDescription.VIZ.value}")
                 viz_prompt = build_viz_prompt()
@@ -342,7 +397,11 @@ class PipelineOrchestrator:
                     execution_time_ms=execution_time,
                 )
 
+                ##################################################################################
                 # Step 9: GRAPH
+                ##################################################################################
+
+                # Build the graph prompt
                 if viz_result.get("data_points") and viz_result.get("run_id"):
                     logger.info(f"{PipelineStep.GRAPH.value}: {PipelineStepDescription.GRAPH.value}")
                     try:
@@ -365,7 +424,11 @@ class PipelineOrchestrator:
                         logger.warning(f"Graph generation failed: {e}")
                         errors.append(f"Graph generation failed: {str(e)}")
 
+            ##################################################################################
             # Step 10: FORMAT
+            ##################################################################################
+
+            # Build the format prompt
             logger.info(f"{PipelineStep.FORMAT.value}: {PipelineStepDescription.FORMAT.value}")
             format_prompt = build_format_prompt() if self.settings.use_llm_formatting else None
             start_time = time.time()
@@ -423,16 +486,33 @@ class PipelineOrchestrator:
                 "error": reasoning,
             }
         
-        # Default format for general questions
         return {
             "patron": "general",
             "datos": [],
-            "arquetipo": None,
-            "visualizacion": "NO",
-            "tipo_grafica": None,
-            "imagen": None,
-            "link_power_bi": None,
-            "insight": reasoning,
-            "error": "",
+            "arquetipo": "NA",
+            "visualizacion": "NA",
+            "tipo_grafica": "NA",
+            "imagen": "NA",
+            "link_power_bi": "NA",
+            "insight": "",
+            "error": reasoning,
+        }
+
+    def _format_non_comparacion_response(
+        self, state: PipelineState, intent_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Format response for non-comparacion questions."""
+        pattern_type = state.pattern_type
+        reasoning = intent_result.get("reasoning", "Este tipo de pregunta aun no esta soportada. Por favor, ingrese una pregunta de comparacion.")
+        return {
+            "patron": pattern_type,
+            "datos": [{"NA": {}}],
+            "arquetipo": state.arquetipo,
+            "visualizacion": "NA",
+            "tipo_grafica": "NA",
+            "imagen": "NA",
+            "link_power_bi": "NA",
+            "insight": "NA",
+            "error": reasoning,
         }
 

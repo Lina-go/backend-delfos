@@ -53,7 +53,6 @@ class IntentClassifier:
                     agent, message, response_format=IntentResult
                 )
             
-            # Convert Pydantic model to dict
             if not isinstance(result_model, IntentResult):
                 # Try to recover if the agent returned raw text
                 if isinstance(result_model, str):

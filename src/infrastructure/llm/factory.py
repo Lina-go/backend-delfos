@@ -8,8 +8,9 @@ from agent_framework_azure_ai import AzureAIAgentClient
 from agent_framework.anthropic import AnthropicClient
 
 from src.config.settings import Settings
+import logging
+logger = logging.getLogger(__name__)
 
-# Shared credential instance (singleton pattern)
 _shared_credential: DefaultAzureCredential | None = None
 
 
@@ -39,7 +40,6 @@ async def close_shared_credential():
     if _shared_credential is not None:
         await _shared_credential.close()
         _shared_credential = None
-
 
 def is_anthropic_model(model: str) -> bool:
     """Check if model is Anthropic (Claude)."""
@@ -94,10 +94,8 @@ def create_anthropic_agent(
         max_tokens: Maximum tokens for response
         response_format: Optional Pydantic BaseModel for structured output
     """
-    import logging
-    logger = logging.getLogger(__name__)
+
     
-    # Determine which model to use
     final_model = model or settings.sql_agent_model
     
     logger.debug(f"Creating Anthropic agent '{name}' with model: {final_model}")
