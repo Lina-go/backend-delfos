@@ -109,6 +109,8 @@ def create_anthropic_agent(
         "instructions": instructions,
         "tools": tools,
         "max_tokens": max_tokens,
+        "seed": 42,
+        "temperature": 0.0
     }
     if response_format:
         agent_kwargs["response_format"] = response_format

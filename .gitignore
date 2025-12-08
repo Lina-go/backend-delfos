@@ -19,7 +19,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+#
+src/services/graph/output/
 # Virtual environments
 .venv/
 venv/
