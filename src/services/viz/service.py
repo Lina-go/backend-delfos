@@ -2,7 +2,7 @@
 
 import logging
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from src.config.settings import Settings
 from agent_framework import ChatAgent 
@@ -26,25 +26,29 @@ class VisualizationService:
         sql_results: List[Any],
         user_id: str,
         question: str,
-        sql_query: str = "",
+        sql_query: Optional[str] = "",  
+        tablas: Optional[List[str]] = None, 
+        resumen: Optional[str] = "",   
     ) -> Dict[str, Any]:
         """
         Generate visualization for SQL results.
         """
         try:
-            # Preparar el input incluyendo el SQL query para contexto
+            # Preparar el input incluyendo el contexto extra
             viz_input = {
                 "user_id": user_id,
                 "sql_results": {
                     "pregunta_original": question,
-                    "sql": sql_query,
+                    "sql": sql_query or "",
+                    "tablas": tablas or [],
                     "resultados": sql_results,
                     "total_filas": len(sql_results),
+                    "resumen": resumen or "",
                 },
                 "original_question": question,
             }
             
-            # Serializar a JSON string
+            # Serializar a JSON string (IMPORTANTE: usar json.dumps)
             input_str = json.dumps(viz_input, ensure_ascii=False)
 
             system_prompt = build_viz_prompt()
@@ -53,10 +57,13 @@ class VisualizationService:
             viz_temperature = self.settings.viz_temperature
 
             credential = get_shared_credential()
+            
+            # Usamos el cliente sin parámetros extraños como max_iterations
             async with azure_agent_client(
                 self.settings, model, credential
             ) as client:
                 async with mcp_connection(self.settings) as mcp:
+                    # Creamos el agente directamente
                     agent = client.create_agent(
                         name="VisualizationService",
                         instructions=system_prompt,
@@ -65,6 +72,7 @@ class VisualizationService:
                         temperature=viz_temperature,
                     )
                     
+                    # Ejecutamos
                     result_model = await run_agent_with_format(
                         agent, 
                         input_str, 
@@ -74,7 +82,7 @@ class VisualizationService:
             if isinstance(result_model, VizResult):
                 return result_model.model_dump()
             
-            logger.warning(f"Resultado inesperado del agente: {type(result_model)}")
+            # Fallback
             return {
                 "tipo_grafico": None,
                 "metric_name": None,

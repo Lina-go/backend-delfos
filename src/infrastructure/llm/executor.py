@@ -21,13 +21,13 @@ async def run_single_agent(agent: Any, input_text: str) -> str:
     """
     async def _execute_agent():
         response = await agent.run(input_text)
-        print("--------------------------------")
-        print(response.text)
-        print(len(response.messages))
-        print("MENSAJES:")
+        logger.info("--------------------------------")
+        logger.info(response.text)
+        logger.info(len(response.messages))
+        logger.info("MENSAJES:")
         for message in response.messages:
-            print(f"Role: {message.role}, Text: {message.text}")
-        print("--------------------------------")
+            logger.info(f"Role: {message.role}, Text: {message.text}")
+        logger.info("--------------------------------")
         return response.text
     
     # Ejecutamos con lógica de reintento para rate limits
@@ -50,13 +50,13 @@ async def run_agent_with_format(
     """
     async def _execute_agent():
         response = await agent.run(input_text)
-        print("--------------------------------")
-        print(response.text)
-        print(len(response.messages))
-        print("MENSAJES:")
+        logger.info("--------------------------------")
+        logger.info(response.text)
+        logger.info(len(response.messages))
+        logger.info("MENSAJES:")
         for message in response.messages:
-            print(f"Role: {message.role}, Text: {message.text}")
-        print("--------------------------------")
+            logger.info(f"Role: {message.role}, Text: {message.text}")
+        logger.info("--------------------------------")
         text_result = response.text 
 
         if response_format and text_result:
@@ -69,7 +69,6 @@ async def run_agent_with_format(
                     return response_format(**json_data)
                 except Exception as e:
                     logger.warning(f"Error al parsear respuesta como {response_format.__name__}: {e}")
-                    # Si falla el parseo, devolvemos el texto para no romper el flujo
                     return text_result
             else:
                 logger.warning("No se encontró JSON válido en la respuesta")
