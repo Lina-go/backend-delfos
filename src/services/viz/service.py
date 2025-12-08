@@ -1,21 +1,19 @@
 """Visualization service."""
 
-import json
 import logging
-from typing import Dict, Any, List, Optional
+import json
+from typing import Dict, Any, List
 
 from src.config.settings import Settings
-from src.infrastructure.llm.executor import run_single_agent, run_agent_with_format
+# Importamos el ChatAgent estándar del framework
+from agent_framework import ChatAgent 
+from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import azure_agent_client, get_shared_credential
 from src.infrastructure.mcp.client import mcp_connection
 from src.config.prompts import build_viz_prompt
-from src.utils.json_parser import JSONParser
 from src.services.viz.models import VizResult
 
-
-
 logger = logging.getLogger(__name__)
-
 
 class VisualizationService:
     """Orchestrates visualization flow."""
@@ -26,112 +24,80 @@ class VisualizationService:
 
     async def generate(
         self,
-        sql_results: List[Any],  # Can be List[str] from MCP or List[Dict] after parsing
+        sql_results: List[Any],
         user_id: str,
         question: str,
-        sql_query: Optional[str] = None,
-        tablas: Optional[List[str]] = None,
-        resumen: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate visualization for SQL results.
-        
-        The agent handles chart selection, data formatting, and MCP tool calls
-        to generate Power BI URLs. This service only orchestrates the agent execution.
-        
-        Args:
-            sql_results: SQL query results
-            user_id: User identifier
-            question: Original user question
-            sql_query: The SQL query that was executed
-            tablas: List of table names used in the query
-            resumen: Summary of the results
-            
-        Returns:
-            Dictionary with visualization data (from agent response)
         """
         try:
+            # 1. Preparar el input como JSON String válido
+            # Es CRÍTICO usar json.dumps para que el agente reciba comillas dobles
             viz_input = {
                 "user_id": user_id,
                 "sql_results": {
                     "pregunta_original": question,
-                    "sql": sql_query or "",
-                    "tablas": tablas or [],
                     "resultados": sql_results,
                     "total_filas": len(sql_results),
-                    "resumen": resumen or "",
                 },
                 "original_question": question,
             }
+            
+            input_str = json.dumps(viz_input, ensure_ascii=False)
 
             system_prompt = build_viz_prompt()
             model = self.settings.viz_agent_model
+            # Nota: Usamos settings para configuración, asegurando flexibilidad
             viz_max_tokens = self.settings.viz_max_tokens
             viz_temperature = self.settings.viz_temperature
 
-            # Create agent with restricted MCP tools
-            viz_tools = [
-                "insert_agent_output_batch",
-                "generate_powerbi_url",
-            ]
-            
+            # 2. Obtener credenciales
             credential = get_shared_credential()
+            
+            # 3. Crear cliente y agente
+            # Usamos el context manager definido en factory.py
             async with azure_agent_client(
-                self.settings, model, credential, max_iterations=3
-            ) as client:
-                async with mcp_connection(self.settings, allowed_tools=viz_tools) as mcp:
-                    agent = client.create_agent(
+                self.settings, model, credential
+            ) as chat_client:
+                
+                # Conectar herramientas MCP
+                async with mcp_connection(self.settings) as mcp_tools:
+                    
+                    # Creamos el ChatAgent directamente
+                    # Al pasar 'tools=[mcp_tools]', el agente sabe llamar a insert_agent_output_batch
+                    agent = ChatAgent(
                         name="VisualizationService",
+                        chat_client=chat_client, 
                         instructions=system_prompt,
-                        tools=mcp,
+                        tools=[mcp_tools], 
                         max_tokens=viz_max_tokens,
                         temperature=viz_temperature,
-                        response_format=VizResult,  # enforce structured output if supported
-                    )
-                    input_json = json.dumps(viz_input, ensure_ascii=False, indent=2)
-                    logger.info(f"VisualizationService input JSON: {input_json[:1000]}...")  # Log first 1000 chars
-                    
-                    # Prefer structured output via response_format
-                    viz_result = await run_agent_with_format(
-                        agent, input_json, response_format=VizResult
                     )
 
-                    # If parsing failed, fallback to manual JSON extraction
-                    if isinstance(viz_result, VizResult):
-                        viz_dict = viz_result.model_dump()
-                        logger.info(f"VisualizationService result (parsed): {json.dumps(viz_dict, indent=2, ensure_ascii=False)}")
-                        return viz_dict
-                    else:
-                        # Some clients return an AgentRunResponse; try common fields before str()
-                        raw_viz_result = ""
-                        for attr in ["text", "value", "output", "output_text", "content"]:
-                            raw_viz_result = getattr(viz_result, attr, "") or ""
-                            if raw_viz_result:
-                                break
-                        if not raw_viz_result:
-                            raw_viz_result = viz_result if isinstance(viz_result, str) else str(viz_result)
-                        logger.info(f"VisualizationService raw result (length: {len(raw_viz_result)}): {raw_viz_result[:500]}...")
-                        viz_json = JSONParser.extract_json(raw_viz_result) if raw_viz_result else None
-                        logger.info(f"VisualizationService extracted JSON: {json.dumps(viz_json, indent=2, ensure_ascii=False) if viz_json else 'None'}")
-                        
-                        if viz_json:
-                            viz_json.setdefault("tipo_grafico", None)
-                            viz_json.setdefault("metric_name", None)
-                            viz_json.setdefault("data_points", [])
-                            viz_json.setdefault("powerbi_url", None)
-                            viz_json.setdefault("run_id", None)
-                            viz_json.setdefault("image_url", None)
-                            return viz_json
-                        else:
-                            logger.warning("VisualizationService: Could not extract JSON from agent response")
-                            return {
-                                "tipo_grafico": None,
-                                "metric_name": None,
-                                "data_points": [],
-                                "powerbi_url": None,
-                                "run_id": None,
-                                "image_url": None,
-                            }
+                    # 4. Ejecutar el agente
+                    # run_agent_with_format maneja la ejecución y el parseo
+                    result_model = await run_agent_with_format(
+                        agent, 
+                        input_str, 
+                        response_format=VizResult
+                    )
+            
+            # 5. Procesar y retornar resultado
+            if isinstance(result_model, VizResult):
+                return result_model.model_dump()
+            
+            # Fallback si el resultado no es el esperado
+            logger.warning(f"Resultado inesperado del agente: {type(result_model)}")
+            return {
+                "tipo_grafico": None,
+                "metric_name": None,
+                "data_points": [],
+                "powerbi_url": None,
+                "run_id": None,
+                "image_url": None,
+                "error": "Formato inválido"
+            }
 
         except Exception as e:
             logger.error(f"Visualization error: {e}", exc_info=True)
@@ -140,5 +106,5 @@ class VisualizationService:
                 "powerbi_url": None,
                 "image_url": None,
                 "run_id": None,
+                "error": str(e)
             }
-

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # Triage Agent
     triage_agent_model: str = "gpt-4.1"
     triage_temperature: float = 0.0
-    triage_max_tokens: int = 200
+    triage_max_tokens: int = 400
 
     # Intent Agent
     intent_agent_model: str = "gpt-4o-mini"
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # Viz Agent
     viz_agent_model: str = "gpt-4o-mini"
     viz_temperature: float = 0.0
-    viz_max_tokens: int = 2048
+    viz_max_tokens: int = 4096
 
     # Graph Agent
     graph_agent_model: str = "gpt-4o-mini"
