@@ -57,7 +57,7 @@ class VisualizationService:
             credential = get_shared_credential()
 
             async with azure_agent_client(
-                self.settings, model, credential, max_iterations=1
+                self.settings, model, credential, #max_iterations=2
             ) as client:
                 async with mcp_connection(self.settings) as mcp:
                     # Creamos el agente directamente

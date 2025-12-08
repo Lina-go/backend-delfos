@@ -504,7 +504,7 @@ class PipelineOrchestrator:
             }
         
         return {
-            "patron": "general",
+            "patron": "NA",
             "datos": [],
             "arquetipo": "NA",
             "visualizacion": "NA",
