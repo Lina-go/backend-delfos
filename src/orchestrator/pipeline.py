@@ -4,6 +4,7 @@ import logging
 import time
 import json
 from typing import Dict, Any
+import unicodedata
 
 from src.config.settings import Settings
 from src.config.constants import PipelineStep, PipelineStepDescription
@@ -147,7 +148,13 @@ class PipelineOrchestrator:
 
             # Set the state
             state.intent = intent_result["intent"]
-            state.pattern_type = intent_result.get("tipo_patron")
+            raw_pattern = intent_result.get("tipo_patron", "")
+            state.pattern_type = (
+                unicodedata.normalize("NFKD", raw_pattern)
+                .encode("ascii", "ignore")
+                .decode()
+                .lower()
+            )
             state.arquetipo = intent_result.get("arquetipo")
             state.viz_required = state.intent == "requiere_visualizacion"
             self.session_logger.log_agent_response(
@@ -414,10 +421,19 @@ class PipelineOrchestrator:
                         )
                         execution_time = (time.time() - start_time) * 1000
                         state.image_url = graph_result.image_url
+                        state.html_url = graph_result.html_url
+                        state.png_url = graph_result.png_url
+                        graph_response = {
+                            "image_url": graph_result.image_url,
+                            "html_url": graph_result.html_url,
+                            "png_url": graph_result.png_url,
+                            "html_path": graph_result.html_path,
+                            "png_path": graph_result.png_path,
+                        }
                         self.session_logger.log_agent_response(
                             agent_name="GraphService",
-                            raw_response=json.dumps({"image_url": graph_result.image_url}, indent=2, ensure_ascii=False),
-                            parsed_response={"image_url": graph_result.image_url},
+                            raw_response=json.dumps(graph_response, indent=2, ensure_ascii=False),
+                            parsed_response=graph_response,
                             input_text=f"Run ID: {viz_result.get('run_id')}\nChart Type: {viz_result.get('tipo_grafico')}",
                             execution_time_ms=execution_time,
                         )

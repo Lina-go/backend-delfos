@@ -39,6 +39,8 @@ class PipelineState:
     tipo_grafico: Optional[str] = None
     powerbi_url: Optional[str] = None
     image_url: Optional[str] = None
+    html_url: Optional[str] = None
+    png_url: Optional[str] = None
     run_id: Optional[str] = None
 
     # Step 8: Final response

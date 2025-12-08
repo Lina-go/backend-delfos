@@ -8,11 +8,15 @@ from typing import Optional, List, Dict, Any
 class GraphResult:
     """Result from graph generation."""
 
-    image_url: str
+    image_url: Optional[str]
     chart_type: str
     run_id: Optional[str] = None
-    blob_url: Optional[str] = None
+    html_url: Optional[str] = None
+    png_url: Optional[str] = None
+    html_path: Optional[str] = None
+    png_path: Optional[str] = None
     title: Optional[str] = None
+
 
 
 @dataclass

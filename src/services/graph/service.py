@@ -47,6 +47,7 @@ class GraphService:
             
             return GraphResult(
                 image_url=result["image_url"],
+                html_url=result.get("html_url"),
                 chart_type=chart_type,
                 run_id=run_id,
                 title=title,

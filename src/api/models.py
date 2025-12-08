@@ -20,6 +20,7 @@ class ChatResponse(BaseModel):
     visualizacion: str = Field(..., description="YES or NO")
     tipo_grafica: Optional[str] = Field(None, description="Chart type")
     imagen: Optional[str] = Field(None, description="Chart image URL")
+    html_url: Optional[str] = Field(None, description="Chart HTML URL")
     link_power_bi: Optional[str] = Field(None, description="Power BI URL")
     insight: Optional[str] = Field(None, description="Generated insight")
     error: Optional[str] = Field("", description="Error message if error occurred, empty string otherwise")

@@ -69,6 +69,7 @@ class ResponseFormatter:
                     "tipo_grafico": state.tipo_grafico,
                     "powerbi_url": state.powerbi_url,
                     "image_url": state.image_url,
+                    "html_url": state.html_url,
                     "run_id": state.run_id,
                 }
 
