@@ -8,6 +8,11 @@ from src.config.settings import get_settings
 
 
 ChartArtifacts = Dict[str, Any]
+config_params={           # muestra el logo (opcional)
+        "displayModeBar": True,           # fuerza barra visible
+        "modeBarButtonsToRemove": [],     # no ocultar botones
+        "staticPlot": False,              # permitir interacción
+    }
 
 
 def _apply_styling(fig: go.Figure, title: str) -> None:
@@ -25,7 +30,7 @@ def _apply_styling(fig: go.Figure, title: str) -> None:
 
 def _render_outputs(fig: go.Figure) -> Tuple[bytes, bytes]:
     """Render figure to HTML and PNG bytes."""
-    html_bytes = fig.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8")
+    html_bytes = fig.to_html(full_html=True, include_plotlyjs="cdn", config=config_params).encode("utf-8")
     png_bytes = fig.to_image(format="png", width=1100, height=650, scale=2)
     return html_bytes, png_bytes
 
