@@ -1,7 +1,9 @@
 """API routes."""
 
+import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from src.api.models import ChatRequest, ChatResponse, HealthResponse, SchemaResponse
 from src.api.dependencies import get_settings_dependency
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, tags=["chat"])
 async def chat(
     request: ChatRequest,
     settings: Settings = Depends(get_settings_dependency),
@@ -45,6 +47,76 @@ async def chat(
                 await orchestrator.close()
             except Exception as cleanup_error:
                 logger.warning(f"Error during cleanup: {cleanup_error}")
+
+
+@router.post(
+    "/chat/stream",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Server-Sent Events stream",
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "type": "string",
+                        "example": 'data: {"step": "triage", "result": {...}, "state": {...}}\n\n',
+                    }
+                }
+            },
+        }
+    },
+    tags=["chat"],
+)
+async def chat_stream(
+    request: ChatRequest,
+    settings: Settings = Depends(get_settings_dependency),
+):
+    """
+    Streaming chat endpoint using Server-Sent Events (SSE).
+    
+    Emits events as each pipeline step completes:
+    - triage: Triage classification result
+    - intent: Intent classification result
+    - schema: Schema selection result
+    - sql_generation: SQL generation result
+    - sql_execution: SQL execution result
+    - verification: Verification result
+    - visualization: Visualization result (if required)
+    - graph: Graph generation result (if visualization)
+    - format: Response formatting result
+    - complete: Final response
+    - error: Error event (if any)
+    
+    **Note**: This endpoint returns a streaming response. Use EventSource or fetch with streaming
+    to consume the events in real-time.
+    """
+    async def generate():
+        orchestrator = None
+        try:
+            orchestrator = PipelineOrchestrator(settings)
+            async for event in orchestrator.process_stream(request.message, request.user_id):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            logger.info("Stream completed successfully")
+        except Exception as e:
+            logger.error(f"Error in streaming: {e}", exc_info=True)
+            yield f"data: {json.dumps({'step': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            if orchestrator:
+                try:
+                    await orchestrator.close()
+                    logger.info("Stream connection closed")
+                except Exception as cleanup_error:
+                    logger.warning(f"Error during cleanup: {cleanup_error}")
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
