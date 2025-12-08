@@ -28,7 +28,7 @@ class BlobStorageClient:
 
     def _get_client(self, account_url: Optional[str] = None) -> BlobServiceClient:
         """
-        Get or create BlobServiceClient instance.
+        Get or create BlobServiceClient instance (reuses existing client if available).
         
         Args:
             account_url: Optional storage account URL (overrides settings)
@@ -39,23 +39,29 @@ class BlobStorageClient:
         Raises:
             ValueError: If neither connection string nor account URL is configured
         """
+        # Reuse existing client if available
+        if self._client is not None:
+            return self._client
+        
         # Use provided URL or fall back to settings
         storage_url = account_url or self.settings.azure_storage_account_url
         
         # Prefer connection string if available
         if self.settings.azure_storage_connection_string:
             logger.debug("Using connection string for blob storage")
-            return BlobServiceClient.from_connection_string(
+            self._client = BlobServiceClient.from_connection_string(
                 self.settings.azure_storage_connection_string
             )
+            return self._client
         
         # Use account URL with credential
         if storage_url:
             logger.debug(f"Using account URL with credential: {storage_url}")
-            return BlobServiceClient(
+            self._client = BlobServiceClient(
                 account_url=storage_url,
                 credential=self.credential
             )
+            return self._client
         
         raise ValueError(
             "Azure Storage configuration required. "
