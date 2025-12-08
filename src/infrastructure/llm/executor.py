@@ -86,6 +86,10 @@ async def run_agent_with_format(
                         # Accumulate text chunks instead of overwriting
                         full_text += msg.text
         
+        logger.debug(f"run_agent_with_format: full_text length={len(full_text)}, response_format={response_format}")
+        if not full_text:
+            logger.warning(f"run_agent_with_format: No text received from agent for {response_format.__name__ if response_format else 'no format'}")
+        
         # If response_format provided, parse and validate
         if response_format and full_text:
             from src.utils.json_parser import JSONParser
@@ -108,7 +112,9 @@ async def run_agent_with_format(
                 )
                 return full_text
         
-        return full_text if full_text else ""
+        result = full_text if full_text else ""
+        logger.debug(f"run_agent_with_format: returning {type(result).__name__}, length={len(result) if isinstance(result, str) else 'N/A'}")
+        return result
     
     # Execute with retry logic for rate limits
     return await run_with_retry(

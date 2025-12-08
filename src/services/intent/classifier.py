@@ -39,8 +39,9 @@ class IntentClassifier:
 
 
             credential = get_shared_credential()
+            # IntentClassifier doesn't use tools, only needs 1-2 iterations
             async with azure_agent_client(
-                self.settings, model, credential
+                self.settings, model, credential, max_iterations=2
             ) as client:
                 # Note: model is already specified in azure_agent_client
                 # tools=None is not needed (default is no tools)

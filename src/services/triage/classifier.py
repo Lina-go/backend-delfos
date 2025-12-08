@@ -40,8 +40,9 @@ class TriageClassifier:
 
             # Create agent with MCP tools to verify database structure
             credential = get_shared_credential()
+            # TriageClassifier uses MCP tools to explore schema, needs a few iterations
             async with azure_agent_client(
-                self.settings, model, credential
+                self.settings, model, credential, max_iterations=5
             ) as client:
                 async with mcp_connection(self.settings) as mcp:
                     agent = client.create_agent(

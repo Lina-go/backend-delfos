@@ -31,7 +31,7 @@ class CodeFormatter:
                 "tipo_grafica": state.tipo_grafico,
                 "imagen": state.image_url,
                 "link_power_bi": state.powerbi_url,
-                "insight": state.sql_resumen or "No insight available",
+                "insight": state.sql_insights or state.sql_resumen or "No insight available",
                 "error": "",
             }
             
@@ -48,7 +48,7 @@ class CodeFormatter:
                 "tipo_grafica": None,
                 "imagen": None,
                 "link_power_bi": None,
-                "insight": state.sql_resumen or "No insight available",
+                "insight": state.sql_insights,
                 "error": str(e),
             }
 

@@ -60,6 +60,7 @@ class ResponseFormatter:
                     "resultados": state.sql_results or [],
                     "total_filas": state.total_filas,
                     "resumen": state.sql_resumen,
+                    "insights": state.sql_insights,
                 },
             }
 
@@ -88,8 +89,9 @@ class ResponseFormatter:
                 response = await run_single_agent(agent, str(format_input))
             else:
                 credential = get_shared_credential()
+                # ResponseFormatter doesn't use tools, only needs 1-2 iterations
                 async with azure_agent_client(
-                    self.settings, model, credential
+                    self.settings, model, credential, max_iterations=2
                 ) as client:
                     agent = client.create_agent(
                         name="ResponseFormatter",

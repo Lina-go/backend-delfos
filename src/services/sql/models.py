@@ -21,6 +21,7 @@ class SQLExecutionResult(BaseModel):
     resultados: List[Dict[str, Any]]
     total_filas: int
     resumen: str
+    insights: Optional[str] = None
 
 
 @dataclass

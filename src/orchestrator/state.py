@@ -13,11 +13,11 @@ class PipelineState:
     user_id: str
 
     # Step 1: Triage
-    query_type: Optional[str] = None  # data_question, general, out_of_scope
+    query_type: Optional[str] = None  # data_question | general | out_of_scope
 
     # Step 2: Intent
-    intent: Optional[str] = None  # nivel_puntual, requiere_viz
-    pattern_type: Optional[str] = None
+    intent: Optional[str] = None  # nivel_puntual | requiere_viz
+    pattern_type: Optional[str] = None # comparacion | relacion | proyeccion | simulacion
     arquetipo: Optional[str] = None
 
     # Step 3: Schema
@@ -29,6 +29,7 @@ class PipelineState:
     sql_results: Optional[List[Any]] = None  # Can be List[str] from MCP or List[Dict] after parsing
     total_filas: int = 0
     sql_resumen: Optional[str] = None
+    sql_insights: Optional[str] = None
 
     # Step 6: Verification
     verification_passed: bool = False

@@ -272,6 +272,7 @@ class PipelineOrchestrator:
             state.sql_results = exec_result.get("resultados", [])
             state.total_filas = exec_result.get("total_filas", 0)
             state.sql_resumen = exec_result.get("resumen")
+            state.sql_insights = exec_result.get("insights")
             self.session_logger.log_agent_response(
                 agent_name="SQLExecutor",
                 raw_response=json.dumps(exec_result, indent=2, ensure_ascii=False),
@@ -304,10 +305,28 @@ class PipelineOrchestrator:
                 logger.info(f"{PipelineStep.VIZ.value}: {PipelineStepDescription.VIZ.value}")
                 viz_prompt = build_viz_prompt()
                 start_time = time.time()
+                
+                # Build complete input for logging
+                viz_input = {
+                    "user_id": state.user_id,
+                    "sql_results": {
+                        "pregunta_original": message,
+                        "sql": state.sql_query or "",
+                        "tablas": state.selected_tables or [],
+                        "resultados": state.sql_results,
+                        "total_filas": len(state.sql_results),
+                        "resumen": state.sql_resumen or "",
+                    },
+                    "original_question": message,
+                }
+                
                 viz_result = await self.viz.generate(
                     state.sql_results,
                     state.user_id,
                     message,
+                    sql_query=state.sql_query,
+                    tablas=state.selected_tables,
+                    resumen=state.sql_resumen,
                 )
                 execution_time = (time.time() - start_time) * 1000
                 state.tipo_grafico = viz_result.get("tipo_grafico")
@@ -318,7 +337,7 @@ class PipelineOrchestrator:
                     agent_name="VisualizationService",
                     raw_response=json.dumps(viz_result, indent=2, ensure_ascii=False),
                     parsed_response=viz_result,
-                    input_text=f"Question: {message}\nResults: {len(state.sql_results)} rows",
+                    input_text=json.dumps(viz_input, indent=2, ensure_ascii=False),
                     system_prompt=viz_prompt,
                     execution_time_ms=execution_time,
                 )

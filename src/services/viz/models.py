@@ -8,9 +8,9 @@ from typing import Optional, List, Dict, Any
 class VizResult(BaseModel):
     """Result from visualization generation."""
 
-    tipo_grafico: str
-    metric_name: str
-    data_points: List[Dict[str, Any]]
+    tipo_grafico: Optional[str] = None
+    metric_name: Optional[str] = None
+    data_points: Optional[List[Dict[str, Any]]] = None
     powerbi_url: Optional[str] = None
     run_id: Optional[str] = None
     image_url: Optional[str] = None

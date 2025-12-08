@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # Graph Agent
     graph_agent_model: str = "gpt-4o-mini"
     graph_temperature: float = 0.0
-    graph_max_tokens: int = 2048
+    graph_max_tokens: int = 4096
 
     # Format Agent (optional)
     format_agent_model: str = "gpt-4o-mini"

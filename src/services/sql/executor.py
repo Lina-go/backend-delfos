@@ -66,6 +66,7 @@ class SQLExecutor:
                     "resultados": [],
                     "total_filas": 0,
                     "resumen": f"Error executing SQL: {execution_result['error']}",
+                    "insights": None,
                 }
             
             raw_results = execution_result.get("raw", "")
@@ -91,8 +92,9 @@ class SQLExecutor:
             logger.info(f"Formatting results via agent with model: {model} (no tools)")
 
             credential = get_shared_credential()
+            # SQLFormatter doesn't use tools, so only needs 1-2 iterations
             async with azure_agent_client(
-                self.settings, model, credential
+                self.settings, model, credential, max_iterations=2
             ) as client:
                 # No MCP tools - agent only formats, cannot execute queries
                 agent = client.create_agent(
@@ -114,5 +116,6 @@ class SQLExecutor:
                 "resultados": [],
                 "total_filas": 0,
                 "resumen": f"Error executing SQL: {str(e)}",
+                "insights": None,
             }
 
