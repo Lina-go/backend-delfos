@@ -48,16 +48,26 @@ class SessionLogger:
 
         metadata_content = f"""# Sesión: {self.session_timestamp}
 
-- **User ID**: {user_id}
-- **Started at**: {started_at}
-- **User Message**: {user_message}
+## Información de la Sesión
+
+- **Usuario:** {user_id}
+- **Inicio:** {started_at}
+
+## Mensaje Original
+
+```
+{user_message}
+```
 
 ---
 
+## Agentes Ejecutados
+
+Los archivos de respuesta de cada agente están en este directorio.
 """
 
-        metadata_file = self.session_dir / "00_Metadata.md"
-        metadata_file.write_text(metadata_content, encoding="utf-8")
+        session_file = self.session_dir / "00_session_info.md"
+        session_file.write_text(metadata_content, encoding="utf-8")
 
         return str(self.session_dir)
 
@@ -67,8 +77,9 @@ class SessionLogger:
         raw_response: str,
         parsed_response: Optional[Any] = None,
         input_text: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         execution_time_ms: Optional[float] = None,
-    ) -> None:
+    ) -> str:
         """
         Log an agent's response to a markdown file.
 
@@ -77,7 +88,11 @@ class SessionLogger:
             raw_response: Raw response from the agent.
             parsed_response: Parsed response (optional).
             input_text: Input text sent to the agent (optional).
+            system_prompt: System prompt/instructions used by the agent (optional).
             execution_time_ms: Execution time in milliseconds (optional).
+
+        Returns:
+            Path of the created file.
         """
         if self.session_dir is None:
             raise RuntimeError("Session not started. Call start_session() first.")
@@ -87,22 +102,106 @@ class SessionLogger:
         filename = f"{file_number}_{agent_name}.md"
         filepath = self.session_dir / filename
 
-        content = f"# {agent_name}\n\n"
-        content += f"**Execution Time**: {execution_time_ms:.2f} ms\n\n" if execution_time_ms else ""
-        content += f"**Timestamp**: {datetime.now().isoformat()}\n\n"
+        content_parts = [
+            f"# {agent_name}",
+            "",
+            f"**Ejecutado:** {datetime.now().isoformat()}",
+        ]
+
+        if execution_time_ms is not None:
+            content_parts.append(f"**Tiempo de ejecución:** {execution_time_ms:.2f} ms")
+
+        content_parts.extend(["", "---", ""])
+
+        if system_prompt:
+            content_parts.extend([
+                "## System Prompt",
+                "",
+                "```",
+                system_prompt,
+                "```",
+                "",
+            ])
 
         if input_text:
-            content += f"## Input\n\n```\n{input_text}\n```\n\n"
+            content_parts.extend([
+                "## Input",
+                "",
+                "```",
+                input_text,
+                "```",
+                "",
+            ])
 
-        content += f"## Raw Response\n\n```\n{raw_response}\n```\n\n"
+        content_parts.extend([
+            "## Respuesta Raw",
+            "",
+            "```",
+            raw_response,
+            "```",
+            "",
+        ])
 
         if parsed_response:
-            content += f"## Parsed Response\n\n```json\n{json.dumps(parsed_response, indent=2, ensure_ascii=False)}\n```\n"
+            content_parts.extend([
+                "## Respuesta Parseada (JSON)",
+                "",
+                "```json",
+                json.dumps(parsed_response, indent=2, ensure_ascii=False),
+                "```",
+                "",
+            ])
 
+        content = "\n".join(content_parts)
         filepath.write_text(content, encoding="utf-8")
 
-    def end_session(self) -> None:
-        """End the current session."""
+        return str(filepath)
+
+    def end_session(
+        self,
+        success: bool,
+        final_message: str = "",
+        errors: Optional[list] = None,
+    ) -> None:
+        """
+        End the session by adding a summary.
+
+        Args:
+            success: Whether the workflow was successful.
+            final_message: Final workflow message.
+            errors: List of errors if any.
+        """
+        if not self.session_dir:
+            return
+
+        session_file = self.session_dir / "00_session_info.md"
+        status = "Exitoso" if success else "Con errores"
+
+        summary = f"""
+
+---
+
+## Resumen de Ejecución
+
+- **Estado:** {status}
+- **Agentes ejecutados:** {self.agent_counter}
+- **Finalizado:** {datetime.now().isoformat()}
+
+### Mensaje Final
+
+```
+{final_message}
+```
+"""
+
+        if errors:
+            summary += "\n### Errores\n\n"
+            for error in errors:
+                summary += f"- {error}\n"
+
+        with open(session_file, "a", encoding="utf-8") as f:
+            f.write(summary)
+
         self.session_dir = None
         self.agent_counter = 0
         self.session_timestamp = None

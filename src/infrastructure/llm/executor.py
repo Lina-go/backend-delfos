@@ -15,19 +15,18 @@ async def run_single_agent(agent: Any, input_text: str) -> str:
     """
     Execute an agent in isolation using SequentialBuilder.
     Includes automatic retry for rate limit errors.
-    Optimized to only keep the last message instead of accumulating all.
+    Accumulates all text chunks from streaming response to ensure complete output.
     """
     async def _execute_agent():
         workflow = SequentialBuilder().participants([agent]).build()
-        last_text = ""
+        full_text = ""
         async for event in workflow.run_stream(input_text):
             if isinstance(event, WorkflowOutputEvent):
                 for msg in event.data:
                     if hasattr(msg, "text") and msg.text:
-                        last_text = msg.text  # Only keep the last message
-        return last_text
+                        full_text += msg.text
+        return full_text if full_text else ""
     
-    # Execute with retry logic for rate limits (optimized delays)
     return await run_with_retry(
         _execute_agent,
         max_retries=2,  
@@ -79,24 +78,37 @@ async def run_agent_with_format(
                 pass
         
         # Use SequentialBuilder (works with all agent types)
+        full_text = ""  # Accumulate all text chunks
         async for event in workflow.run_stream(input_text):
             if isinstance(event, WorkflowOutputEvent):
                 for msg in event.data:
                     if hasattr(msg, "text") and msg.text:
-                        last_text = msg.text
+                        # Accumulate text chunks instead of overwriting
+                        full_text += msg.text
         
         # If response_format provided, parse and validate
-        if response_format and last_text:
+        if response_format and full_text:
             from src.utils.json_parser import JSONParser
-            json_data = JSONParser.extract_json(last_text)
+            json_data = JSONParser.extract_json(full_text)
             if json_data:
                 try:
-                    return response_format(**json_data)
+                    parsed_model = response_format(**json_data)
+                    logger.debug(f"Successfully parsed {response_format.__name__} from response")
+                    return parsed_model
                 except Exception as e:
-                    logger.warning(f"Failed to parse response as {response_format.__name__}: {e}")
-                    return last_text
+                    logger.warning(
+                        f"Failed to parse response as {response_format.__name__}: {e}. "
+                        f"JSON data: {json_data}. Full text (first 500 chars): {full_text[:500]}"
+                    )
+                    return full_text
+            else:
+                logger.warning(
+                    f"Could not extract JSON from response for {response_format.__name__}. "
+                    f"Full text (first 500 chars): {full_text[:500]}"
+                )
+                return full_text
         
-        return last_text
+        return full_text if full_text else ""
     
     # Execute with retry logic for rate limits
     return await run_with_retry(

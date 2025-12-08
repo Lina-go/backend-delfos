@@ -75,23 +75,43 @@ def create_anthropic_agent(
     tools: Any | None = None,
     model: str | None = None,
     max_tokens: int = 8192,
+    response_format: Any | None = None,
 ):
     """
     Create an Anthropic (Claude) agent.
     
     Usage:
-        agent = create_anthropic_agent(settings, "SQLAgent", prompt, mcp)
-        response = await run_agent_with_format(agent, input, response_format=SQLResult)
+        agent = create_anthropic_agent(settings, "SQLAgent", prompt, mcp, response_format=SQLResult)
+        response = await run_single_agent(agent, input)
         
-    Note: response_format should be passed to agent.run(), not create_agent().
+    Args:
+        settings: Application settings
+        name: Agent name
+        instructions: System prompt/instructions
+        tools: Optional tools (e.g., MCP connection)
+        model: Optional model name (defaults to settings.sql_agent_model)
+        max_tokens: Maximum tokens for response
+        response_format: Optional Pydantic BaseModel for structured output
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Determine which model to use
+    final_model = model or settings.sql_agent_model
+    
+    logger.debug(f"Creating Anthropic agent '{name}' with model: {final_model}")
+    
     client = AnthropicClient(
-        model_id=model or settings.sql_agent_model,
+        model_id=final_model,
         api_key=settings.anthropic_api_key,
     )
-    return client.create_agent(
-        name=name,
-        instructions=instructions,
-        tools=tools,
-        max_tokens=max_tokens,
-    )
+    agent_kwargs = {
+        "name": name,
+        "instructions": instructions,
+        "tools": tools,
+        "max_tokens": max_tokens,
+    }
+    if response_format:
+        agent_kwargs["response_format"] = response_format
+    
+    return client.create_agent(**agent_kwargs)

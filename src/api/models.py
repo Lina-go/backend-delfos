@@ -22,6 +22,7 @@ class ChatResponse(BaseModel):
     imagen: Optional[str] = Field(None, description="Chart image URL")
     link_power_bi: Optional[str] = Field(None, description="Power BI URL")
     insight: Optional[str] = Field(None, description="Generated insight")
+    error: Optional[str] = Field("", description="Error message if error occurred, empty string otherwise")
 
 
 class HealthResponse(BaseModel):

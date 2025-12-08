@@ -11,6 +11,7 @@ from src.infrastructure.llm.factory import (
     create_anthropic_agent,
     get_shared_credential,
 )
+from src.infrastructure.mcp.client import mcp_connection
 from src.utils.json_parser import JSONParser
 
 logger = logging.getLogger(__name__)
@@ -37,24 +38,16 @@ class TriageClassifier:
             system_prompt = build_triage_system_prompt()
             model = self.settings.triage_agent_model
 
-            # Create agent without tools
-            if is_anthropic_model(model):
-                agent = create_anthropic_agent(
-                    settings=self.settings,
-                    name="TriageClassifier",
-                    instructions=system_prompt,
-                    tools=None,
-                    model=model,
-                )
-                response = await run_single_agent(agent, message)
-            else:
-                credential = get_shared_credential()
-                async with azure_agent_client(
-                    self.settings, model, credential
-                ) as client:
+            # Create agent with MCP tools to verify database structure
+            credential = get_shared_credential()
+            async with azure_agent_client(
+                self.settings, model, credential
+            ) as client:
+                async with mcp_connection(self.settings) as mcp:
                     agent = client.create_agent(
                         name="TriageClassifier",
                         instructions=system_prompt,
+                        tools=mcp,
                         max_tokens=self.settings.triage_max_tokens,
                         temperature=self.settings.triage_temperature,
                     )
@@ -68,7 +61,6 @@ class TriageClassifier:
             # Default to data_question on error
             return {
                 "query_type": "data_question",
-                "confidence": 0.5,
                 "reasoning": "Error in classification, defaulting to data_question",
             }
 

@@ -12,6 +12,15 @@ class SQLResult(BaseModel):
     sql: str
     tablas: List[str]
     resumen: str
+    error: Optional[str] = None
+
+
+class SQLExecutionResult(BaseModel):
+    """Result from SQL execution with formatted results."""
+
+    resultados: List[Dict[str, Any]]
+    total_filas: int
+    resumen: str
 
 
 @dataclass

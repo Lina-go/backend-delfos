@@ -4,7 +4,7 @@ System prompts for NL2SQL pipeline agents.
 
 from typing import List, Optional
 
-from src.config.archetypes import ARCHETYPES, get_archetypes_by_pattern
+from src.config.archetypes import ARCHETYPES, get_archetypes_by_pattern_type
 from src.config.constants import QueryType
 from src.config.constants import Archetype, Intent, PatternType
 from src.config.database import get_all_table_names, DATABASE_TABLES, CONCEPT_TO_TABLES
@@ -15,22 +15,15 @@ from src.config.database import get_all_table_names, DATABASE_TABLES, CONCEPT_TO
 
 def build_triage_system_prompt() -> str:
     """Build system prompt for triage agent."""
-    
-    # Generate valid values from enum
-    valid_query_types = ", ".join([f'"{qt.value}"' for qt in QueryType])
-    
-    # Get tables from database config
-    tables_list = ", ".join(get_all_table_names())
-    
     prompt = (
-        f"Classify a user's question into one of three categories: {valid_query_types}. "
+        "Classify each user question as one of three types—DATA_QUESTION, GENERAL, or OUT_OF_SCOPE—justifying the selection reasoning in Spanish. Base your decision on both the question and the context of FinancialDB. "
         ""
-        "## Categories "
+        ""
+        "## Available Categories "
         ""
         f"1. **{QueryType.DATA_QUESTION.value}**: Asks for specific information or metrics from FinancialDB. "
         "   - Requires querying the database to answer "
         "   - Examples: \"¿Cuántos clientes tenemos?\", \"Lista las transacciones del último mes\", \"¿Cuál es el saldo de la cuenta 123?\" "
-        f"   - Available tables: {tables_list} "
         ""
         f"2. **{QueryType.GENERAL.value}**: Seeks explanations, definitions, or general conversation. "
         "   - Does NOT require database queries "
@@ -40,25 +33,38 @@ def build_triage_system_prompt() -> str:
         "   - Outside the domain of FinancialDB "
         "   - Examples: \"¿Qué clima hace hoy?\", \"Cuéntame un chiste\", \"¿Quién ganó el partido?\" "
         ""
-        "## Instructions "
+        "## Procedure "
         ""
-        "1. Analyze the user question for key phrases and intent. "
-        "2. State why it fits or does not fit each category. "
-        "3. Eliminate non-fitting categories and choose one. "
-        "4. Return analysis in `<analysis>` tags (max 6 sentences, in Spanish). "
-        "5. Return classification JSON in `<classification>` tags. "
+        "1. Quote the most relevant parts of the question. "
+        "2. Identify financial or data-related terms. "
+        "3. For each category, briefly state evidence for or against it based on the question"
+        "4. Eliminate non-fitting categories and choose one. "
+        "5. Conclude by selecting and briefly justifying the most appropriate category. "
         ""
         "## Output Format "
         ""
+        "The response must be structured exactly as follows: "
+        ""
         "<analysis> "
-        "[Your reasoning here - why this category fits, max 6 sentences, in Spanish] "
+        "[Concise analysis in Spanish: quote key phrases, identify financial or data-related indicators, justify each category, and support the final classification.] "
         "</analysis> "
+        ""
         "<classification> "
         "{ "
-        f"  \"query_type\": \"{QueryType.DATA_QUESTION.value}\" | \"{QueryType.GENERAL.value}\" | \"{QueryType.OUT_OF_SCOPE.value}\", "
-        "  \"reasoning\": \"Brief explanation in Spanish\" "
+        f"  \"query_type\": \"[DATA_QUESTION|GENERAL|OUT_OF_SCOPE]\",  // Required: only one of the three allowed values. "
+        "  \"reasoning\": \"[Brief justification in Spanish explaining the choice]\"  // Required. Clear justification in Spanish. "
         "} "
         "</classification> "
+        ""
+        "- The <analysis> block must justify the classification in detail and explain the reasoning for each category, always in Spanish. "
+        "- The <classification> block must include both required fields (\"query_type\" and \"reasoning\") in the specified JSON format. "
+        "- If there is ambiguity, follow the established prioritization rules. "
+        "- Do not add unexpected fields or modify the output structure. "
+        ""
+        "## Output Control and Verbosity "
+        ""
+        "- Limit your response to a maximum of two paragraphs in <analysis> and no more than 3 lines for the \"reasoning\" field. "
+        "- Prioritize complete and actionable responses within this limit, even for brief user queries. "
         ""
         "## Edge Cases "
         ""
@@ -73,21 +79,7 @@ def build_triage_system_prompt() -> str:
         "} "
         "</classification> "
         ""
-        f"- If ambiguous, prefer {QueryType.DATA_QUESTION.value} when financial terms are present. "
-        ""
-        "## Example "
-        ""
-        "User: \"¿Cuántos clientes tenemos registrados?\" "
-        ""
-        "<analysis> "
-        "La pregunta solicita el número total de clientes, lo que requiere acceder a la base de datos para recuperar un conteo específico de la tabla Customers. No es una pregunta general ni está fuera del alcance del sistema financiero. "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f"  \"query_type\": \"{QueryType.DATA_QUESTION.value}\", "
-        "  \"reasoning\": \"La pregunta requiere consultar la tabla de clientes para obtener un conteo.\" "
-        "} "
-        "</classification> "
+        #f"- If ambiguous, prefer {QueryType.DATA_QUESTION.value} when financial terms are present. "
     )
     return prompt
 
@@ -114,11 +106,13 @@ def build_intent_system_prompt() -> str:
         "## Dimension 1: Intent "
         f"{intent_section} "
         ""
-        "## Dimension 2: Pattern Types (A through N) "
-        f"{patterns_section} "
-        ""
-        "## Dimension 3: Analytical Archetypes "
+        "## Dimension 2: Patterns "
+        "Patterns are analytical categories: Comparación, Relación, Proyección, and Simulación. Each pattern contains multiple archetypes (A-N). "
         f"{archetype_mapping} "
+        ""
+        "## Dimension 3: Archetypes (A through N) "
+        "These are the individual query archetypes, each identified by a letter from A to N. They are grouped by Pattern below. "
+        f"{patterns_section} "
         ""
         "# Your Task "
         ""
@@ -131,15 +125,15 @@ def build_intent_system_prompt() -> str:
         "   - List all evidence supporting \"requiere_visualizacion\" "
         "   - Compare and determine which intent is best supported "
         ""
-        "3. **Systematic pattern evaluation**: Go through EACH pattern from A to N individually. For each pattern, assess: "
-        "   - Pattern letter and name "
-        "   - Does the question structure match this pattern's template? (Yes/No) "
+        "3. **Systematic archetype evaluation**: Go through EACH archetype from A to N individually. For each archetype, assess: "
+        "   - Archetype letter and name "
+        "   - Does the question structure match this archetype's template? (Yes/No) "
         "   - Are the characteristic keywords/phrases present? (List them if yes) "
         "   - Overall match assessment: Strong match / Possible match / Not a match "
         ""
-        "4. **Identify best pattern match**: Based on your evaluations, identify the strongest match. "
+        "4. **Identify best archetype match**: Based on your evaluations, identify the strongest matching archetype (a single letter from A to N). This will be your **arquetipo** field in the output. "
         ""
-        "5. **Determine archetype**: State which archetype corresponds to your identified pattern. "
+        "5. **Determine pattern**: Based on your identified archetype, determine which Pattern it belongs to (Comparación, Relación, Proyección, or Simulación). This will be your **tipo_patron** field in the output. "
         ""
         "6. **Verify consistency**: Check that your classifications are consistent. "
         ""
@@ -148,11 +142,15 @@ def build_intent_system_prompt() -> str:
         "{ "
         "  \"user_question\": \"[exact text of the user's question]\", "
         "  \"intent\": \"[nivel_puntual or requiere_visualizacion]\", "
-        "  \"tipo_patron\": \"[single uppercase letter: A-N]\", "
-        "  \"arquetipo\": \"[Comparación, Relación, Proyección, or Simulación]\", "
+        "  \"tipo_patron\": \"[Comparación, Relación, Proyección, or Simulación]\", "
+        "  \"arquetipo\": \"[single uppercase letter: A-N]\", "
         "  \"razon\": \"[brief explanation in Spanish]\" "
         "} "
         "``` "
+        ""
+        "**Critical field mapping**: "
+        "- **tipo_patron**: Must be the Pattern (one of: Comparación, Relación, Proyección, or Simulación) that your identified archetype belongs to "
+        "- **arquetipo**: Must be the individual archetype letter (a single uppercase letter from A to N) that best matches the question "
         ""
         "Begin your classification now. "
     )
@@ -184,29 +182,29 @@ def _build_patterns_section() -> str:
     
     # Group by PatternType
     for pattern_type in PatternType:
-        archetypes = get_archetypes_by_pattern(pattern_type)
+        archetypes = get_archetypes_by_pattern_type(pattern_type)
         
         if not archetypes:
             continue
         
         # Get pattern letter range (e.g., "A-H" for COMPARACION)
-        letters = [info.archetype.name.replace("PATTERN_", "") for info in archetypes]
+        letters = [info.archetype.name.replace("ARCHETYPE_", "") for info in archetypes]
         letter_range = f"{letters[0]}-{letters[-1]}" if len(letters) > 1 else letters[0]
         
-        section_header = f"### {pattern_type.value.title()} Patterns ({letter_range})"
+        section_header = f"### {pattern_type.value.title()} Pattern - Archetypes ({letter_range})"
         sections.append(section_header)
         
         for info in archetypes:
-            letter = info.archetype.name.replace("PATTERN_", "")
+            letter = info.archetype.name.replace("ARCHETYPE_", "")
             
-            # Build pattern block using tuple format
+            # Build archetype block using tuple format
             pattern_parts = [
                 "",
-                f"**Pattern {letter} - {info.name}** ",
+                f"**Archetype {letter} - {info.name}** ",
                 f"- Template: \"{info.template}\" ",
                 f"- {info.description} ",
                 f"- Intent: {info.intent.value} ",
-                f"- Archetype: {pattern_type.value.title()} "
+                f"- Pattern: {pattern_type.value.title()} "
             ]
             
             # Add examples if available
@@ -221,16 +219,16 @@ def _build_patterns_section() -> str:
 
 
 def _build_archetype_mapping() -> str:
-    """Build archetype to pattern mapping."""
+    """Build pattern to archetype mapping."""
     
-    lines = ["The four archetypes map to pattern groups:"]
+    lines = ["The four Patterns and their corresponding archetypes:"]
     
     for pattern_type in PatternType:
-        archetypes = get_archetypes_by_pattern(pattern_type)
+        archetypes = get_archetypes_by_pattern_type(pattern_type)
         if archetypes:
-            letters = [info.archetype.name.replace("PATTERN_", "") for info in archetypes]
+            letters = [info.archetype.name.replace("ARCHETYPE_", "") for info in archetypes]
             letter_range = f"{letters[0]}-{letters[-1]}" if len(letters) > 1 else letters[0]
-            lines.append(f"- **{pattern_type.value.title()}**: Patterns {letter_range}")
+            lines.append(f"- **{pattern_type.value.title()}**: Archetypes {letter_range}")
     
     return "\n".join(lines)
 
@@ -321,28 +319,28 @@ def build_sql_generation_system_prompt(prioritized_tables: Optional[List[str]] =
         ""
         "7. **Validate approach** - Check that your query will: "
         "   - Be READ-ONLY (SELECT or INSERT only) "
-        "   - Use proper table naming (dbo. prefix) "
+        "   - **Always use proper table naming with dbo. prefix for ALL tables "
         "   - Join tables correctly based on relationships "
         "   - Answer the user's question completely "
         ""
         "## Step 2: Inspect the Database "
         ""
-        "Call the necessary MCP tools to gather schema information. At minimum: "
-        ""
-        "- Call **list_tables** to confirm available tables "
-        "- Call **get_table_schema** for each table you plan to use "
-        "- Call **get_table_relationships** if your query requires JOINs "
-        "- Call **get_distinct_values** if you need to verify specific filter values exist "
-        ""
+        "Call the necessary MCP tools to gather schema information"
         "## Step 3: Generate SQL Query "
         ""
         "Write a SQL query following these rules: "
         ""
         "**Query Type**: Only SELECT or INSERT statements. Never use UPDATE, DELETE, DROP, ALTER, or other modification statements. "
         ""
-        "**Naming**: "
-        "- Prefix all table names with \"dbo.\" (e.g., dbo.Accounts, dbo.Customers) "
-        "- Use exact column names as they appear in the schema "
+        ""
+        "**Examples of CORRECT table naming**: "
+        "- `SELECT * FROM dbo.Customers`"
+        "- `SELECT COUNT(*) FROM dbo.Accounts`"
+        "- `SELECT * FROM dbo.People p JOIN dbo.Customers c ON p.id = c.personId`"
+        ""
+        "**Examples of INCORRECT table naming: "
+        "- `SELECT * FROM Customers` (missing dbo. prefix) "
+        "- `SELECT COUNT(*) FROM Accounts` (missing dbo. prefix) "
         ""
         "**Construction**: "
         "- Use appropriate JOINs based on foreign key relationships when combining tables "
@@ -359,77 +357,43 @@ def build_sql_generation_system_prompt(prioritized_tables: Optional[List[str]] =
         "  \"pregunta_original\": \"the user's exact question\", "
         "  \"sql\": \"your complete SQL query\", "
         "  \"tablas\": [\"dbo.Table1\", \"dbo.Table2\"], "
-        "  \"resumen\": \"natural language explanation of what this query would return\" "
+        "  \"resumen\": \"natural language explanation of what this query would return\", "
+        "  \"error\": null "
         "} "
         "``` "
         ""
-        
         "**Field descriptions**: "
         "- **pregunta_original**: The user's question exactly as stated "
         "- **sql**: Your complete SQL query "
         "- **tablas**: Array of all table names used (with dbo. prefix) "
         "- **resumen**: Clear explanation of what results this query will produce "
+        "- **error**: Optional field. Only include this field if you cannot generate a SQL query. Leave as null if you successfully generate SQL. "
         ""
-        "Begin your analysis in <thinking> tags, then call the necessary MCP tools to inspect the database, and finally provide your JSON response with the generated SQL query. "
+        "## Step 5: Handle Unavailable Information "
+        ""
+        "If you determine that the information requested in the question is NOT available in FinancialDB, you MUST: "
+        ""
+        "1. **Identify unmapped business concepts**: List the specific business concepts from the user's question that cannot be mapped to any tables or columns in the database. Quote the exact phrases from the question (e.g., \"tasa del dólar\", \"precio de acciones\", \"clima\"). "
+        ""
+        "2. **List tables inspected**: Document which tables you reviewed using MCP tools (e.g., \"Se revisaron las siguientes tablas: dbo.Accounts, dbo.Transactions, dbo.Transfers\"). "
+        ""
+        "3. **List available information**: Based on the database schema and business concept mapping guide, list what information IS available in FinancialDB. Use the business concept mapping to provide a comprehensive list (e.g., \"La base de datos FinancialDB contiene información sobre: cuentas y saldos (dbo.Accounts), clientes y personas (dbo.Customers, dbo.People), préstamos y pagos (dbo.Loans, dbo.LoanPayments), transacciones (dbo.Transactions), transferencias (dbo.Transfers), empleados y sucursales (dbo.Employees, dbo.Branches)\"). "
+        ""
+        "4. **Generate detailed error message**: Create a error message in Spanish following this format: "
+        ""
+        "\"No se puede responder porque [conceptos no mapeados con comillas]. Se revisaron las siguientes tablas: [lista de tablas]. La base de datos FinancialDB contiene información sobre: [lista de información disponible basada en business concept mapping], pero no incluye [tipo de información faltante].\" "
+        ""
+        "5. **Set error field and leave SQL empty**: When you include the error field, set \"sql\" to an empty string \"\", \"tablas\" to an empty array [], and \"resumen\" to an empty string \"\". "
+        ""
+        "**Use the error field when**: "
+        "- The information requested does not exist in the database "
+        "- You cannot map business concepts from the question to any tables/columns "
+        "- The question requires external data not available in FinancialDB (e.g., exchange rates, stock prices, weather data) "
+        ""
+        "Begin your analysis in <thinking> tags, then call the necessary MCP tools to inspect the database, and finally provide your JSON response with the generated SQL query or detailed error message. "
     )
     
     return prompt
-
-
-def build_sql_generation_user_input(
-    message: str,
-    intent: Optional[str] = None,
-    pattern_type: Optional[str] = None,
-    arquetipo: Optional[str] = None
-) -> str:
-    """
-    Build user input for SQL generation agent with optional intent context.
-    
-    Args:
-        message: User's natural language question
-        intent: Optional intent classification (nivel_puntual, requiere_viz)
-        pattern_type: Optional pattern type (A-N)
-        arquetipo: Optional analytical archetype
-        
-    Returns:
-        Formatted user input string with question and context
-    """
-    input_text = (
-        "Here is the user's question: "
-        ""
-        "<question> "
-        f"{message} "
-        "</question> "
-    )
-    
-    # Add context section if any context is provided
-    if intent or pattern_type or arquetipo:
-        input_text += (
-            ""
-            "Here is additional context from the intent classification: "
-            ""
-            "<context> "
-        )
-        
-        if intent:
-            input_text += f"Intent: {intent} "
-            if intent == "requiere_viz":
-                input_text += "(This query will be visualized, so structure the SQL to facilitate visualization with appropriate GROUP BY, ORDER BY, etc.) "
-            elif intent == "nivel_puntual":
-                input_text += "(This query asks for a specific point-in-time value, not a visualization) "
-            input_text += "\n"
-        
-        if pattern_type:
-            input_text += f"Pattern Type: {pattern_type} "
-            input_text += "\n"
-        
-        if arquetipo:
-            input_text += f"Arquetipo: {arquetipo} "
-            input_text += "\n"
-        
-        input_text += "</context> "
-    
-    return input_text
 
 
 def _build_database_schema() -> str:
@@ -517,7 +481,7 @@ def build_sql_retry_user_input(
     suggestion_text = verification_suggestion or "No specific suggestion provided"
     
     input_text = (
-        "The previous SQL query failed verification. Please generate a corrected query. "
+        "The previous SQL query failed validation/verification. Please generate a corrected query. "
         ""
         "<original_question> "
         f"{original_question} "
@@ -527,9 +491,9 @@ def build_sql_retry_user_input(
         f"{previous_sql} "
         "</previous_sql> "
         ""
-        "<verification_issues> "
+        "<validation_errors> "
         f"{issues_text} "
-        "</verification_issues> "
+        "</validation_errors> "
         ""
         "<suggestion> "
         f"{suggestion_text} "
@@ -927,6 +891,51 @@ def build_format_prompt() -> str:
         "- Generate a meaningful `insight` when possible, but it can be `null` if no insight is relevant "
         "- Use the exact field names and structure shown above "
         "Begin your analysis now and return the JSON response. "
+    )
+    
+    return prompt
+
+# =============================================================================
+# SQL Execution Agent
+# =============================================================================
+
+def build_sql_execution_system_prompt() -> str:
+    """
+    Build system prompt for SQL execution agent.
+    
+    This agent executes SQL queries via MCP and formats results as dictionaries
+    with column names as keys.
+    """
+    prompt = (
+        "Execute the SQL query using the **execute_sql_query** MCP tool and format results as dictionaries. "
+        ""
+        "## Instructions "
+        ""
+        "1. Call **execute_sql_query** with the SQL query. "
+        "2. The tool returns results as tuple strings like `[\"(450,)\"]` or `[\"('checking', 11225836.12)\"]`. "
+        "3. Extract column names/aliases from the SQL SELECT clause (use AS aliases when present). "
+        "4. Convert each tuple to a dictionary mapping column names to values. "
+        ""
+        "## Output Format "
+        ""
+        "Your response must be valid JSON in exactly this structure: "
+        "```json "
+        "{ "
+        "  \"resultados\": [ "
+        "    {\"column1\": \"value1\", \"column2\": \"value2\"}, "
+        "    {\"column1\": \"value3\", \"column2\": \"value4\"} "
+        "  ], "
+        "  \"total_filas\": 2, "
+        "  \"resumen\": \"Query executed successfully. 2 rows returned.\" "
+        "} "
+        "``` "
+        ""
+        "If the query produces an error, still return this JSON format with: "
+        "- `resultados`: empty array [] "
+        "- `total_filas`: 0 "
+        "- `resumen`: descriptive error message "
+        ""
+        "Use exact column names/aliases from the SQL query. Preserve data types (numbers as numbers, strings as strings). "
     )
     
     return prompt

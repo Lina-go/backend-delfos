@@ -32,6 +32,7 @@ class CodeFormatter:
                 "imagen": state.image_url,
                 "link_power_bi": state.powerbi_url,
                 "insight": state.sql_resumen or "No insight available",
+                "error": "",
             }
             
             return response
@@ -48,5 +49,6 @@ class CodeFormatter:
                 "imagen": None,
                 "link_power_bi": None,
                 "insight": state.sql_resumen or "No insight available",
+                "error": str(e),
             }
 

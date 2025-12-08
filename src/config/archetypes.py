@@ -31,8 +31,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
     # ==========================================================================
     # Comparación (A-H)
     # ==========================================================================
-    Archetype.PATTERN_A: ArchetypeInfo(
-        archetype=Archetype.PATTERN_A,
+    Archetype.ARCHETYPE_A: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_A,
         name="nivel_puntual",
         template="¿Cuál es el nivel/valor de {métrica} para {conjunto/dimensión} en {período}?",
         description="Asks for a specific metric value at a specific time point",
@@ -44,8 +44,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cuál es el monto total de préstamos originados en el período seleccionado?",
         ],
     ),
-    Archetype.PATTERN_B: ArchetypeInfo(
-        archetype=Archetype.PATTERN_B,
+    Archetype.ARCHETYPE_B: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_B,
         name="evolucion_temporal",
         template="¿Cómo ha evolucionado {métrica} para {conjunto/dimensión} a lo largo de {período}?",
         description="Asks about trends, time series, or how something has changed over time",
@@ -57,8 +57,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cómo ha evolucionado el monto de préstamos originados por mes?",
         ],
     ),
-    Archetype.PATTERN_C: ArchetypeInfo(
-        archetype=Archetype.PATTERN_C,
+    Archetype.ARCHETYPE_C: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_C,
         name="composicion_porcentaje",
         template="¿Qué porcentaje/porción de {conjunto} corresponde a {categoría/condición} en {período}?",
         description="Asks about portions of a total, percentages, or proportions",
@@ -70,8 +70,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Qué proporción del monto transado corresponde a cada tipo de transacción?",
         ],
     ),
-    Archetype.PATTERN_D: ArchetypeInfo(
-        archetype=Archetype.PATTERN_D,
+    Archetype.ARCHETYPE_D: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_D,
         name="participacion_share",
         template="¿Cuál es la participación de {actor} en {mercado/conjunto} durante {período}?",
         description="Asks about an entity's share within a larger set",
@@ -83,8 +83,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cuál es la participación de cada tipo de préstamo en el saldo total de préstamos activos?",
         ],
     ),
-    Archetype.PATTERN_E: ArchetypeInfo(
-        archetype=Archetype.PATTERN_E,
+    Archetype.ARCHETYPE_E: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_E,
         name="contribucion_total",
         template="¿Cuál es la contribución de cada {categoría} al total de {métrica} en {período}?",
         description="Asks what each category contributes to an aggregate total",
@@ -96,8 +96,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cómo contribuye cada sucursal al total de préstamos originados este trimestre?",
         ],
     ),
-    Archetype.PATTERN_F: ArchetypeInfo(
-        archetype=Archetype.PATTERN_F,
+    Archetype.ARCHETYPE_F: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_F,
         name="comparacion_directa",
         template="¿Cómo se compara {métrica} entre {grupo A} y {grupo B} en {período}?",
         description="Asks to compare metrics between two specific groups or categories",
@@ -109,8 +109,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cómo se compara el monto promedio transado entre clientes naturales y jurídicos?",
         ],
     ),
-    Archetype.PATTERN_G: ArchetypeInfo(
-        archetype=Archetype.PATTERN_G,
+        Archetype.ARCHETYPE_G: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_G,
         name="ranking_los_mas",
         template="¿Cuáles {unidades} presentan el mayor/menor {métrica} dentro de {conjunto} en {período}?",
         description="Asks to rank or order entities by a metric",
@@ -122,8 +122,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cómo se ordenan los tipos de préstamo según su monto originado anual?",
         ],
     ),
-    Archetype.PATTERN_H: ArchetypeInfo(
-        archetype=Archetype.PATTERN_H,
+    Archetype.ARCHETYPE_H: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_H,
         name="concentracion_top_n",
         template="¿Qué tan concentrado está {recurso/métrica} en {top-N/contrapartes} durante {período}?",
         description="Asks how concentrated a resource or metric is among top performers",
@@ -138,8 +138,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
     # ==========================================================================
     # Relación (I-J)
     # ==========================================================================
-    Archetype.PATTERN_I: ArchetypeInfo(
-        archetype=Archetype.PATTERN_I,
+    Archetype.ARCHETYPE_I: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_I,
         name="relacion_entre_variables",
         template="¿Cómo se relaciona {métrica A} con {métrica B} para {conjunto} en {período}?",
         description="Asks about the relationship or correlation between two metrics",
@@ -151,8 +151,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cómo se relaciona el monto transado con el número de transacciones por mes?",
         ],
     ),
-    Archetype.PATTERN_J: ArchetypeInfo(
-        archetype=Archetype.PATTERN_J,
+    Archetype.ARCHETYPE_J: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_J,
         name="sensibilidad_derivada",
         template="¿Cuál es la sensibilidad de {resultado} ante cambios en {variable} durante {período}?",
         description="Asks about sensitivity or how much one metric changes when another changes",
@@ -167,8 +167,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
     # ==========================================================================
     # Proyección (K-L)
     # ==========================================================================
-    Archetype.PATTERN_K: ArchetypeInfo(
-        archetype=Archetype.PATTERN_K,
+    Archetype.ARCHETYPE_K: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_K,
         name="descomposicion_cambio",
         template="¿Qué porción del cambio en {métrica} se explica por {driver A} vs {driver B} en {período}?",
         description="Asks what portion of a change is explained by different drivers",
@@ -180,8 +180,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Qué porción del cambio en el saldo de préstamos se explica por originaciones nuevas vs pagos realizados durante el año?",
         ],
     ),
-    Archetype.PATTERN_L: ArchetypeInfo(
-        archetype=Archetype.PATTERN_L,
+    Archetype.ARCHETYPE_L: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_L,
         name="escenario_what_if",
         template="Si {supuesto/condición}, ¿cuál sería el impacto en {resultado} durante {horizonte}?",
         description="Asks about the impact of a hypothetical assumption on an outcome",
@@ -196,8 +196,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
     # ==========================================================================
     # Simulación (M-N)
     # ==========================================================================
-    Archetype.PATTERN_M: ArchetypeInfo(
-        archetype=Archetype.PATTERN_M,
+    Archetype.ARCHETYPE_M: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_M,
         name="capacidad_dado_un_recurso",
         template="Dado {restricción/recurso}, ¿hasta qué nivel puede llegar {resultado} durante {horizonte}?",
         description="Asks for the maximum achievable level given a constraint",
@@ -209,8 +209,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "Dado un número máximo de 1000 transacciones diarias, ¿hasta qué nivel puede llegar el monto total transado durante el próximo mes?",
         ],
     ),
-    Archetype.PATTERN_N: ArchetypeInfo(
-        archetype=Archetype.PATTERN_N,
+    Archetype.ARCHETYPE_N: ArchetypeInfo(
+        archetype=Archetype.ARCHETYPE_N,
         name="requerimiento_inverso",
         template="¿Qué nivel de {variable/palanca} se requiere para alcanzar {objetivo} en {horizonte}?",
         description="Asks what level of a variable is needed to reach a specific objective",
@@ -229,21 +229,22 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
 # Helper functions
 ############################################################
 
+def get_all_archetypes() -> list[ArchetypeInfo]:
+    """Get all archetypes."""
+    return list(ARCHETYPES.values())
+
 def get_archetype_info(archetype: Archetype) -> ArchetypeInfo:
     """Get archetype info by archetype."""
     return ARCHETYPES[archetype]
 
+def get_all_archetypes_for_prompt() -> str:
+    """Get all archetypes for prompt."""
+    return "\n\n".join(info.get_all_info_as_string() for info in ARCHETYPES.values())
 
-def get_archetypes_by_pattern(pattern_type: PatternType) -> list[ArchetypeInfo]:
+def get_archetypes_by_pattern_type(pattern_type: PatternType) -> list[ArchetypeInfo]:
     """Get all archetypes for a pattern type."""
     return [a for a in ARCHETYPES.values() if a.pattern_type == pattern_type]
-
 
 def get_archetypes_by_intent(intent: Intent) -> list[ArchetypeInfo]:
     """Get all archetypes for an intent."""
     return [a for a in ARCHETYPES.values() if a.intent == intent]
-
-
-def get_all_archetypes_for_prompt() -> str:
-    """Generate formatted string of all archetypes for LLM prompts."""
-    return "\n\n".join(info.get_all_info_as_string() for info in ARCHETYPES.values())

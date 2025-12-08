@@ -55,17 +55,11 @@ class IntentClassifier:
                 )
             
             # Convert Pydantic model to dict
-            if isinstance(result_model, IntentResult):
-                return result_model.model_dump()
-            else:
-                # Fallback if result is not the expected type
-                return {
-                    "user_question": message,
-                    "intent": "error",
-                    "tipo_patron": "error",
-                    "arquetipo": "error",
-                    "razon": "Unexpected response format",
-                }
+            if not isinstance(result_model, IntentResult):
+                logger.error(f"Unexpected response format from intent classifier: {type(result_model)}")
+                raise ValueError(f"Expected IntentResult, got {type(result_model)}")
+            
+            return result_model.model_dump()
 
         except Exception as e:
             logger.error(f"Intent classification error: {e}", exc_info=True)

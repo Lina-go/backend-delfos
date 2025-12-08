@@ -23,7 +23,7 @@ class JSONParser:
                 r"<classification>\s*(.*?)\s*</classification>", text, re.DOTALL | re.IGNORECASE
             )
             if classification_match:
-                classification_content = classification_match.group(1)
+                classification_content = classification_match.group(1).strip()
                 # Try to find JSON in the classification content
                 json_match = re.search(
                     r"```(?:json)?\s*(\{.*?\})\s*```", classification_content, re.DOTALL
@@ -33,8 +33,26 @@ class JSONParser:
                         return json.loads(json_match.group(1))
                     except json.JSONDecodeError:
                         pass
-                # Try to find any JSON object in classification content
-                json_match = re.search(r"(\{.*\})", classification_content, re.DOTALL)
+                # Try to find any JSON object in classification content (more precise matching)
+                # Use a balanced brace matcher to find complete JSON objects
+                brace_count = 0
+                start_idx = -1
+                for i, char in enumerate(classification_content):
+                    if char == '{':
+                        if start_idx == -1:
+                            start_idx = i
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0 and start_idx != -1:
+                            json_str = classification_content[start_idx:i+1]
+                            try:
+                                return json.loads(json_str)
+                            except json.JSONDecodeError:
+                                pass
+                            start_idx = -1
+                # Fallback: try simple regex if balanced matching didn't work
+                json_match = re.search(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", classification_content, re.DOTALL)
                 if json_match:
                     try:
                         return json.loads(json_match.group(1))
@@ -78,8 +96,12 @@ class JSONParser:
                     return json.loads(match.group(1))
                 except json.JSONDecodeError:
                     pass
-            # Return empty dict as fallback (caller should handle this)
-            # Note: Consider returning None and updating callers if needed
-            logger.warning("JSONParser: Could not extract JSON from text, returning empty dict")
+            
+            # Log warning and return empty dict
+            # Callers should check for empty dict and handle appropriately
+            logger.warning(
+                f"JSONParser: Could not extract JSON from text (length: {len(text)} chars). "
+                f"First 200 chars: {text[:200]}"
+            )
             return {}
 

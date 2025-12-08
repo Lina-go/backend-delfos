@@ -37,13 +37,9 @@ class SchemaService:
             message: User's natural language question
             
         Returns:
-            Dictionary with tables and schema information:
+            Dictionary with tables array:
             {
-                "tables": ["dbo.People", "dbo.Accounts"],
-                "schema": {
-                    "dbo.People": {"name": "dbo.People", "columns": [...]},
-                    "dbo.Accounts": {"name": "dbo.Accounts", "columns": [...]}
-                }
+                "tables": ["dbo.People", "dbo.Accounts"]
             }
         """
         try:
@@ -68,10 +64,9 @@ class SchemaService:
 
             return {
                 "tables": tables,
-                "schema": schema_info,
             }
 
         except Exception as e:
             logger.error(f"Schema service error: {e}", exc_info=True)
-            return {"tables": [], "schema": {}}
+            return {"tables": []}
 

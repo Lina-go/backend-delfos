@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     ######################################
 
     # Triage Agent
-    triage_agent_model: str = "gpt-4o-mini"
+    triage_agent_model: str = "gpt-4.1"
     triage_temperature: float = 0.0
     triage_max_tokens: int = 200
 
@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     sql_agent_model: str = "claude-sonnet-4-5-20250929"
     sql_temperature: float = 0.0
     sql_max_tokens: int = 4096
+
+    # SQL Executor Agent
+    # Uses azure_agent_client() - must be Azure model
+    sql_executor_agent_model: str = "gpt-4o-mini"
+    sql_executor_temperature: float = 0.0
+    sql_executor_max_tokens: int = 4096
 
     # Verification Agent (optional)
     verification_agent_model: str = "gpt-4o-mini"
@@ -118,9 +124,11 @@ class Settings(BaseSettings):
     response_timeout: int = 120
 
     # Steps timeout
+    # Note: Timeouts are defined but not yet enforced in services
+    # TODO: Implement timeout enforcement using asyncio.wait_for()
     triage_timeout: float = 5.0
     intent_timeout: float = 5.0
-    sql_generation_timeout: float = 60.0
+    sql_generation_timeout: float = 120.0  # Increased for MCP + large schemas
     sql_validation_timeout: float = 10.0
     sql_execution_timeout: float = 15.0
     verification_timeout: float = 10.0
