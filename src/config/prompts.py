@@ -280,7 +280,7 @@ Use these tools to explore the database before writing SQL:
 ## Your Task
 1. Understand what the user is asking for
 2. Use MCP tools to explore relevant tables and verify your approach
-3. Generate a correct SQL query OR explain why the data isn't available
+3. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
 
 ## Output Format
 Return JSON:
@@ -779,18 +779,45 @@ def build_sql_execution_system_prompt() -> str:
     """
     Build system prompt for SQL execution agent.
     
-    This agent executes SQL queries via MCP and formats results as dictionaries
-    with column names as keys.
+    DEPRECATED: This prompt is kept for backwards compatibility but should not be used.
+    Use build_sql_formatting_system_prompt() instead, which formats results without executing queries.
+    """
+    return build_sql_formatting_system_prompt()
+
+
+def build_sql_formatting_system_prompt() -> str:
+    """
+    Build system prompt for SQL result formatting agent.
+    
+    This agent formats raw SQL results (already executed) as dictionaries.
+    It does NOT execute queries - it only formats the provided results.
     """
     prompt = (
-        "Execute the SQL query using the **execute_sql_query** MCP tool and format results as dictionaries. "
+        "You are a SQL result formatter. Your task is to convert raw SQL query results into structured JSON format. "
+        ""
+        "## Important "
+        ""
+        "**You do NOT execute SQL queries.** The query has already been executed. "
+        "You receive the raw results and must format them as dictionaries. "
         ""
         "## Instructions "
         ""
-        "1. Call **execute_sql_query** with the SQL query. "
-        "2. The tool returns results as tuple strings like `[\"(450,)\"]` or `[\"('checking', 11225836.12)\"]`. "
-        "3. Extract column names/aliases from the SQL SELECT clause (use AS aliases when present). "
-        "4. Convert each tuple to a dictionary mapping column names to values. "
+        "1. You will receive: "
+        "   - The SQL query (to extract column names/aliases) "
+        "   - Raw results as newline-separated tuple strings like `(450,)` or `('checking', 11225836.12)` "
+        "   - The number of rows returned "
+        ""
+        "2. Extract column names/aliases from the SQL SELECT clause: "
+        "   - Use AS aliases when present (e.g., `SELECT COUNT(*) AS total` → column name is 'total') "
+        "   - If no alias, use the column name or expression "
+        "   - For `SELECT *`, infer column names from the raw results "
+        ""
+        "3. Convert each tuple string to a dictionary: "
+        "   - Map column names to their corresponding values "
+        "   - Preserve data types (numbers as numbers, strings as strings, dates as strings) "
+        "   - Handle NULL values appropriately "
+        ""
+        "4. Process ALL rows and return them in the results array "
         ""
         "## Output Format "
         ""
@@ -806,12 +833,17 @@ def build_sql_execution_system_prompt() -> str:
         "} "
         "``` "
         ""
-        "If the query produces an error, still return this JSON format with: "
+        "**Rules**: "
+        "- `resultados`: Array of dictionaries, one per row "
+        "- `total_filas`: Total number of rows (integer) "
+        "- `resumen`: Brief summary in Spanish describing what was returned "
+        "- Use exact column names/aliases from the SQL query "
+        "- Preserve data types (numbers as numbers, strings as strings) "
+        ""
+        "If there are no results or an error occurred, return: "
         "- `resultados`: empty array [] "
         "- `total_filas`: 0 "
-        "- `resumen`: descriptive error message "
-        ""
-        "Use exact column names/aliases from the SQL query. Preserve data types (numbers as numbers, strings as strings). "
+        "- `resumen`: descriptive message explaining the situation "
     )
     
     return prompt

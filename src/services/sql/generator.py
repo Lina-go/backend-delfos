@@ -80,7 +80,17 @@ class SQLGenerator:
             sql_max_tokens = self.settings.sql_max_tokens
             logger.info(f"Using SQL agent model: {model}")
 
-            async with mcp_connection(self.settings) as mcp:
+            # Only allow exploration tools, not execution tools
+            # SQLGenerator should only PLAN/GENERATE SQL, not execute it
+            exploration_tools = [
+                "list_tables",
+                "get_table_schema",
+                "get_table_relationships",
+                "get_distinct_values",
+                "get_primary_keys",
+            ]
+
+            async with mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp:
                 agent = create_anthropic_agent(
                     settings=self.settings,
                     name="SQLGenerator",

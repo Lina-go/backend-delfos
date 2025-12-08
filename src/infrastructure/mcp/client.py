@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Optional, Collection
 
 from agent_framework import MCPStreamableHTTPTool, TextContent
 from agent_framework.exceptions import ToolExecutionException
@@ -12,17 +12,26 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def mcp_connection(settings: Settings, name: str = "delfos-mcp"):
+async def mcp_connection(
+    settings: Settings, 
+    name: str = "delfos-mcp",
+    allowed_tools: Optional[Collection[str]] = None
+):
     """
     MCP connection as context manager for agent tools.
     
     Usage:
         async with mcp_connection(settings) as mcp:
             agent = client.create_agent(name="SQL", tools=mcp, ...)
+        
+        # With filtered tools:
+        async with mcp_connection(settings, allowed_tools=["list_tables", "get_table_schema"]) as mcp:
+            agent = client.create_agent(name="SQL", tools=mcp, ...)
     
     Args:
         settings: Application settings
         name: Name for the MCP tool
+        allowed_tools: Optional list of tool names to allow. If None, all tools are available.
         
     Yields:
         MCPStreamableHTTPTool instance ready to use as agent tool
@@ -34,6 +43,7 @@ async def mcp_connection(settings: Settings, name: str = "delfos-mcp"):
         sse_read_timeout=settings.mcp_sse_timeout,
         approval_mode="never_require",
         load_tools=True,
+        allowed_tools=allowed_tools,
     ) as mcp:
         yield mcp
 

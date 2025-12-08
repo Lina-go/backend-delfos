@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # Azure Blob Storage
     ######################################
 
-    azure_storage_account_url: str = ""
+    azure_storage_account_url: str = "https://delfoscharts.blob.core.windows.net"
     azure_storage_container_name: str = "charts"
     azure_storage_connection_string: str = ""
 
