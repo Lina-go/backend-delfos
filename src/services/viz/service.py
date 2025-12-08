@@ -34,7 +34,6 @@ class VisualizationService:
         Generate visualization for SQL results.
         """
         try:
-            # Preparar el input incluyendo el contexto extra
             viz_input = {
                 "user_id": user_id,
                 "sql_results": {
@@ -48,7 +47,6 @@ class VisualizationService:
                 "original_question": question,
             }
             
-            # Serializar a JSON string (IMPORTANTE: usar json.dumps)
             input_str = json.dumps(viz_input, ensure_ascii=False)
 
             system_prompt = build_viz_prompt()
@@ -57,8 +55,7 @@ class VisualizationService:
             viz_temperature = self.settings.viz_temperature
 
             credential = get_shared_credential()
-            
-            # Usamos el cliente sin parámetros extraños como max_iterations
+
             async with azure_agent_client(
                 self.settings, model, credential
             ) as client:

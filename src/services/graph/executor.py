@@ -67,7 +67,7 @@ class GraphExecutor:
                 image_bytes = image_base64
             
             image_url = await storage.upload_blob(
-                container_name=self.settings.azure_storage_container_name or "charts",
+                container_name=self.settings.azure_storage_container_name,
                 blob_name=blob_name,
                 data=image_bytes,
                 content_type="image/png",
