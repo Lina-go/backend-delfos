@@ -22,12 +22,10 @@ class SchemaService:
         """
         self.settings = settings
         self.table_selector = TableSelector(settings)
-        self.mcp_client = MCPClient(settings)
 
     async def close(self):
-        """Close MCP client connection."""
-        if hasattr(self.mcp_client, 'close'):
-            await self.mcp_client.close()
+        """Close MCP client connection (no-op, connections are managed via context manager)."""
+        pass
 
     async def get_schema_context(self, message: str) -> Dict[str, Any]:
         """
@@ -46,21 +44,22 @@ class SchemaService:
             # Select relevant tables
             tables = await self.table_selector.select_tables(message)
             
-            # Get schema for each table
+            # Get schema for each table using context manager
             schema_info = {}
-            for table in tables:
-                cache_key = f"schema_{table}"
-                cached = SchemaCache.get(cache_key)
-                
-                if cached:
-                    schema_info[table] = cached
-                    logger.debug(f"Using cached schema for {table}")
-                else:
-                    # Fetch schema from MCP
-                    table_schema = await self.mcp_client.get_table_schema(table)
-                    schema_info[table] = table_schema
-                    SchemaCache.set(cache_key, table_schema)
-                    logger.debug(f"Fetched and cached schema for {table}")
+            async with MCPClient(self.settings) as mcp_client:
+                for table in tables:
+                    cache_key = f"schema_{table}"
+                    cached = SchemaCache.get(cache_key)
+                    
+                    if cached:
+                        schema_info[table] = cached
+                        logger.debug(f"Using cached schema for {table}")
+                    else:
+                        # Fetch schema from MCP
+                        table_schema = await mcp_client.get_table_schema(table)
+                        schema_info[table] = table_schema
+                        SchemaCache.set(cache_key, table_schema)
+                        logger.debug(f"Fetched and cached schema for {table}")
 
             return {
                 "tables": tables,

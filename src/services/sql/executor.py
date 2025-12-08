@@ -28,11 +28,10 @@ class SQLExecutor:
     def __init__(self, settings: Settings):
         """Initialize SQL executor."""
         self.settings = settings
-        self.mcp_client = MCPClient(settings)
 
     async def close(self):
-        """Close MCP connection."""
-        await self.mcp_client.close()
+        """Close MCP connection (no-op, connections are managed via context manager)."""
+        pass
 
     async def execute(self, sql: str) -> Dict[str, Any]:
         """
@@ -57,21 +56,21 @@ class SQLExecutor:
         try:
             # Step 1: Execute SQL query directly via MCP (guaranteed to run once)
             logger.info("Executing SQL query directly via MCP (single execution)")
-            await self.mcp_client.connect()
-            execution_result = await self.mcp_client.execute_sql(sql)
-            
-            if execution_result.get("error"):
-                logger.error(f"SQL execution error: {execution_result['error']}")
-                return {
-                    "resultados": [],
-                    "total_filas": 0,
-                    "resumen": f"Error executing SQL: {execution_result['error']}",
-                    "insights": None,
-                }
-            
-            raw_results = execution_result.get("raw", "")
-            row_count = execution_result.get("row_count", 0)
-            data_rows = execution_result.get("data", [])
+            async with MCPClient(self.settings) as mcp_client:
+                execution_result = await mcp_client.execute_sql(sql)
+                
+                if execution_result.get("error"):
+                    logger.error(f"SQL execution error: {execution_result['error']}")
+                    return {
+                        "resultados": [],
+                        "total_filas": 0,
+                        "resumen": f"Error executing SQL: {execution_result['error']}",
+                        "insights": None,
+                    }
+                
+                raw_results = execution_result.get("raw", "")
+                row_count = execution_result.get("row_count", 0)
+                data_rows = execution_result.get("data", [])
             
             logger.info(f"SQL executed successfully: {row_count} rows returned")
             

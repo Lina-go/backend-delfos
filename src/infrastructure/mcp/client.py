@@ -56,15 +56,12 @@ class MCPClient:
     """
     Manages MCP connections and direct tool calls.
     
-    Two usage patterns:
+    Usage as context manager (recommended):
+        async with MCPClient(settings) as client:
+            results = await client.execute_sql("SELECT ...")
+            schema = await client.get_table_schema("table_name")
     
-    1. Standalone (manages own connection):
-        client = MCPClient(settings)
-        await client.connect()
-        results = await client.execute_sql("SELECT ...")
-        await client.close()
-    
-    2. With existing connection (from context manager):
+    Or with existing connection (from mcp_connection context manager):
         async with mcp_connection(settings) as mcp:
             client = MCPClient.from_connection(mcp)
             results = await client.execute_sql("SELECT ...")
@@ -79,6 +76,17 @@ class MCPClient:
         self.settings = settings
         self._mcp: MCPStreamableHTTPTool | None = None
         self._owns_connection: bool = True
+
+    async def __aenter__(self):
+        """Enter context manager - establish connection."""
+        if self._mcp is None and self.settings:
+            await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager - close connection."""
+        await self.close()
+        return False  # Don't suppress exceptions
 
     @classmethod
     def from_connection(cls, mcp: MCPStreamableHTTPTool) -> "MCPClient":
@@ -288,7 +296,12 @@ class MCPClient:
             try:
                 await self._mcp.__aexit__(None, None, None)
             except Exception as e:
-                logger.warning(f"Error closing MCP connection: {e}")
+                # Suppress cancel scope errors - they occur when context is already closed
+                error_msg = str(e)
+                if "cancel scope" not in error_msg.lower():
+                    logger.warning(f"Error closing MCP connection: {e}")
+                else:
+                    logger.debug(f"MCP connection already closed (cancel scope): {e}")
             finally:
                 self._mcp = None
 

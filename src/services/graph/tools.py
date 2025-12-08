@@ -8,17 +8,17 @@ from src.config.settings import get_settings
 
 
 ChartArtifacts = Dict[str, Any]
-config_params={           # muestra el logo (opcional)
-        "displayModeBar": True,           # fuerza barra visible
-        "modeBarButtonsToRemove": [],     # no ocultar botones
-        "staticPlot": False,              # permitir interacción
+config_params={         
+        "displayModeBar": True,           
+        "modeBarButtonsToRemove": [],    
+        "staticPlot": False,             
     }
 
 
 def _apply_styling(fig: go.Figure, title: str) -> None:
     """Apply shared styling similar to plotly_blob_demo."""
     fig.update_layout(
-        title=f"<b>{title}</b>",  # HTML bold
+        title=f"<b>{title}</b>",  
         title_font={"color": "black", "size": 16, "family": "Inter, Arial, sans-serif"},
         template="plotly_white",
         hovermode="x unified",
