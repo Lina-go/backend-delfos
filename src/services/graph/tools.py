@@ -19,9 +19,10 @@ def _apply_styling(fig: go.Figure, title: str) -> None:
     """Apply shared styling similar to plotly_blob_demo."""
     fig.update_layout(
         title=title,
+        title_font={"color": "black", "size": 16, "family": "Inter, Arial, sans-serif"},
         template="plotly_white",
         hovermode="x unified",
-        font={"family": "Inter, Arial, sans-serif", "size": 14},
+        font={"family": "Inter, Arial, sans-serif", "size": 12},
         margin={"l": 60, "r": 30, "t": 70, "b": 50},
     )
     fig.update_xaxes(showgrid=True, gridcolor="rgba(0,0,0,0.05)", showspikes=True, spikemode="across")
