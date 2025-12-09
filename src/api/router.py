@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from src.api.models import ChatRequest, ChatResponse, HealthResponse, SchemaResponse
 from src.api.dependencies import get_settings_dependency
 from src.config.settings import Settings
+from src.infrastructure.cache.semantic_cache import SemanticCache
 from src.orchestrator.pipeline import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -123,5 +124,37 @@ async def chat_stream(
 async def health():
     """Health check endpoint."""
     return HealthResponse(status="healthy", version="0.1.0")
+
+
+@router.get("/cache/stats", tags=["cache"])
+async def get_cache_stats():
+    """
+    Get cache statistics.
+    
+    Returns:
+        Dictionary with cache statistics:
+        - size: Number of cached entries
+        - hits: Number of cache hits
+        - misses: Number of cache misses
+        - hit_rate: Hit rate as percentage
+    """
+    stats = SemanticCache.get_stats()
+    return stats
+
+
+@router.delete("/cache", tags=["cache"])
+async def clear_cache():
+    """
+    Clear all cached SQL generation results.
+    
+    Use this endpoint when you want to invalidate the cache,
+    for example after schema changes or when you want fresh results.
+    
+    Returns:
+        Success message
+    """
+    SemanticCache.clear()
+    logger.info("Cache cleared by API request")
+    return {"message": "Cache cleared successfully", "status": "success"}
 
 

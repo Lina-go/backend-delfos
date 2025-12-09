@@ -1,5 +1,6 @@
 """SQL generator service."""
 
+import hashlib
 import logging
 from typing import Dict, Any, Optional, List
 
@@ -8,6 +9,7 @@ from src.config.prompts import (
     build_sql_generation_system_prompt,
     build_sql_retry_user_input,
 )
+from src.infrastructure.cache.semantic_cache import SemanticCache
 from src.infrastructure.llm.executor import run_single_agent
 from src.infrastructure.llm.factory import create_anthropic_agent
 from src.infrastructure.mcp.client import mcp_connection
@@ -28,6 +30,38 @@ class SQLGenerator:
         """
         self.settings = settings
         logger.info(f"SQLGenerator initialized with model: {settings.sql_agent_model}")
+
+    @staticmethod
+    def _generate_cache_key(
+        message: str,
+        schema_context: Optional[Dict[str, Any]],
+        intent: Optional[str],
+        pattern_type: Optional[str],
+    ) -> str:
+        """Generate a cache key for SQL generation.
+        
+        Args:
+            message: User's natural language question
+            schema_context: Schema context with tables
+            intent: Intent classification
+            pattern_type: Pattern type
+            
+        Returns:
+            Cache key (MD5 hash)
+        """
+        # Normalize message (lowercase, strip whitespace)
+        normalized_msg = message.lower().strip()
+        
+        # Get tables (sorted for consistency)
+        tables = []
+        if schema_context and schema_context.get("tables"):
+            tables = sorted(schema_context.get("tables", []))
+        
+        # Create unique string
+        cache_data = f"{normalized_msg}|{','.join(tables)}|{intent or ''}|{pattern_type or ''}"
+        
+        # Generate MD5 hash for shorter key
+        return hashlib.md5(cache_data.encode()).hexdigest()
 
     async def generate(
         self, 
@@ -55,6 +89,22 @@ class SQLGenerator:
             Dictionary with SQL query and metadata
         """
         try:
+            # Only use cache for first attempt (no previous errors)
+            # Retries should always generate new SQL
+            use_cache = not (previous_errors and len(previous_errors) > 0)
+            cache_key = None
+            
+            if use_cache:
+                # Try to get from cache
+                cache_key = self._generate_cache_key(message, schema_context, intent, pattern_type)
+                cached_result = SemanticCache.get(cache_key)
+                
+                if cached_result:
+                    logger.info(f"SQL cache hit for key: {cache_key[:8]}...")
+                    return cached_result
+                else:
+                    logger.debug(f"SQL cache miss for key: {cache_key[:8]}...")
+            
             # Extract prioritized tables from schema_context if provided
             prioritized_tables = None
             if schema_context and schema_context.get("tables"):
@@ -117,7 +167,14 @@ class SQLGenerator:
             
             # Validate and return as dict
             sql_result = SQLResult(**sql_json)
-            return sql_result.model_dump()
+            result_dict = sql_result.model_dump()
+            
+            # Cache the result if this was a first attempt (no previous errors)
+            if use_cache and cache_key:
+                SemanticCache.set(cache_key, result_dict)
+                logger.debug(f"Cached SQL result for key: {cache_key[:8]}...")
+            
+            return result_dict
 
         except Exception as e:
             logger.error(f"SQL generation error: {e}", exc_info=True)
