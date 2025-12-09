@@ -248,3 +248,13 @@ def get_archetypes_by_pattern_type(pattern_type: PatternType) -> list[ArchetypeI
 def get_archetypes_by_intent(intent: Intent) -> list[ArchetypeInfo]:
     """Get all archetypes for an intent."""
     return [a for a in ARCHETYPES.values() if a.intent == intent]
+
+def get_archetype_name(archetype_letter: str) -> str:
+    """Get archetype name by archetype letter.
+    Args:
+        archetype_letter: str (e.g., "N")
+    Returns:
+        str: Archetype name
+    """
+    archetype_enum = Archetype(archetype_letter)
+    return ARCHETYPES[archetype_enum].name

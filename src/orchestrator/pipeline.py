@@ -29,6 +29,7 @@ from src.services.viz.service import VisualizationService
 from src.services.graph.service import GraphService
 from src.services.formatting.formatter import ResponseFormatter
 from src.infrastructure.logging.session_logger import SessionLogger
+from src.config.archetypes import get_archetype_name
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ class PipelineOrchestrator:
             .decode()
             .lower()
         )
-        state.arquetipo = intent_result.get("arquetipo")
+        state.arquetipo = get_archetype_name(intent_result.get("arquetipo"))
         state.viz_required = state.intent == "requiere_visualizacion"
         self.session_logger.log_agent_response(
             agent_name="IntentClassifier",
