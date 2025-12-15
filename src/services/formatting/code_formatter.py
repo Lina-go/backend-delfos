@@ -1,7 +1,7 @@
 """Code-based response formatter (no LLM)."""
 
 import logging
-from typing import Dict, Any
+from typing import Any
 
 from src.orchestrator.state import PipelineState
 
@@ -12,13 +12,13 @@ class CodeFormatter:
     """Formats final response using code (no LLM)."""
 
     @staticmethod
-    def format(state: PipelineState) -> Dict[str, Any]:
+    def format(state: PipelineState) -> dict[str, Any]:
         """
         Format final response from pipeline state using code.
-        
+
         Args:
             state: Pipeline state object
-            
+
         Returns:
             Formatted response dictionary
         """
@@ -35,7 +35,7 @@ class CodeFormatter:
                 "insight": state.sql_insights or state.sql_resumen or "No insight available",
                 "error": "",
             }
-            
+
             return response
 
         except Exception as e:
@@ -53,4 +53,3 @@ class CodeFormatter:
                 "insight": state.sql_insights,
                 "error": str(e),
             }
-

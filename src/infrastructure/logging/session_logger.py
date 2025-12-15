@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class SessionLogger:
@@ -11,7 +11,7 @@ class SessionLogger:
     Logger that saves each agent's responses to markdown files.
     """
 
-    def __init__(self, base_dir: Optional[str] = None) -> None:
+    def __init__(self, base_dir: str | None = None) -> None:
         """
         Initialize the logger.
 
@@ -24,9 +24,9 @@ class SessionLogger:
             # Calculate path to project root: src/infrastructure/logging/session_logger.py -> project root
             self.base_dir = Path(__file__).parent.parent.parent.parent / "logs"
 
-        self.session_dir: Optional[Path] = None
+        self.session_dir: Path | None = None
         self.agent_counter: int = 0
-        self.session_timestamp: Optional[str] = None
+        self.session_timestamp: str | None = None
 
     def start_session(self, user_id: str = "anonymous", user_message: str = "") -> str:
         """
@@ -75,10 +75,10 @@ Los archivos de respuesta de cada agente están en este directorio.
         self,
         agent_name: str,
         raw_response: str,
-        parsed_response: Optional[Any] = None,
-        input_text: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        execution_time_ms: Optional[float] = None,
+        parsed_response: Any | None = None,
+        input_text: str | None = None,
+        system_prompt: str | None = None,
+        execution_time_ms: float | None = None,
     ) -> str:
         """
         Log an agent's response to a markdown file.
@@ -114,43 +114,51 @@ Los archivos de respuesta de cada agente están en este directorio.
         content_parts.extend(["", "---", ""])
 
         if system_prompt:
-            content_parts.extend([
-                "## System Prompt",
-                "",
-                "```",
-                system_prompt,
-                "```",
-                "",
-            ])
+            content_parts.extend(
+                [
+                    "## System Prompt",
+                    "",
+                    "```",
+                    system_prompt,
+                    "```",
+                    "",
+                ]
+            )
 
         if input_text:
-            content_parts.extend([
-                "## Input",
-                "",
-                "```",
-                input_text,
-                "```",
-                "",
-            ])
+            content_parts.extend(
+                [
+                    "## Input",
+                    "",
+                    "```",
+                    input_text,
+                    "```",
+                    "",
+                ]
+            )
 
-        content_parts.extend([
-            "## Respuesta Raw",
-            "",
-            "```",
-            raw_response,
-            "```",
-            "",
-        ])
+        content_parts.extend(
+            [
+                "## Respuesta Raw",
+                "",
+                "```",
+                raw_response,
+                "```",
+                "",
+            ]
+        )
 
         if parsed_response:
-            content_parts.extend([
-                "## Respuesta Parseada (JSON)",
-                "",
-                "```json",
-                json.dumps(parsed_response, indent=2, ensure_ascii=False),
-                "```",
-                "",
-            ])
+            content_parts.extend(
+                [
+                    "## Respuesta Parseada (JSON)",
+                    "",
+                    "```json",
+                    json.dumps(parsed_response, indent=2, ensure_ascii=False),
+                    "```",
+                    "",
+                ]
+            )
 
         content = "\n".join(content_parts)
         filepath.write_text(content, encoding="utf-8")
@@ -161,7 +169,7 @@ Los archivos de respuesta de cada agente están en este directorio.
         self,
         success: bool,
         final_message: str = "",
-        errors: Optional[list] = None,
+        errors: list[str] | None = None,
     ) -> None:
         """
         End the session by adding a summary.
@@ -205,4 +213,3 @@ Los archivos de respuesta de cada agente están en este directorio.
         self.session_dir = None
         self.agent_counter = 0
         self.session_timestamp = None
-

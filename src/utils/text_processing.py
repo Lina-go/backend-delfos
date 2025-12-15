@@ -7,10 +7,10 @@ from datetime import datetime
 def normalize_text(text: str) -> str:
     """
     Normalize text for processing.
-    
+
     Args:
         text: Input text
-        
+
     Returns:
         Normalized text
     """
@@ -24,10 +24,10 @@ def normalize_text(text: str) -> str:
 def parse_date(date_str: str) -> datetime | None:
     """
     Parse date string to datetime.
-    
+
     Args:
         date_str: Date string
-        
+
     Returns:
         Datetime object or None
     """
@@ -47,4 +47,3 @@ def parse_date(date_str: str) -> datetime | None:
         return None
     except Exception:
         return None
-

@@ -1,6 +1,7 @@
 """
 User-facing messages for the NL2SQL pipeline.
 """
+
 from src.config.constants import QueryType
 
 # =============================================================================
@@ -48,6 +49,7 @@ SUCCESS_MESSAGES: dict[str, str] = {
 # Helper Functions
 # =============================================================================
 
+
 def get_rejection_message(query_type: QueryType) -> str:
     """Get rejection message for a query type."""
     return REJECTION_MESSAGES.get(query_type, REJECTION_MESSAGES[QueryType.OUT_OF_SCOPE])
@@ -58,8 +60,7 @@ def get_error_message(error_key: str) -> str:
     return ERROR_MESSAGES.get(error_key, ERROR_MESSAGES["unknown_error"])
 
 
-def format_success_message(message_key: str, **kwargs) -> str:
+def format_success_message(message_key: str, **kwargs: object) -> str:
     """Format a success message with provided values."""
     template = SUCCESS_MESSAGES.get(message_key, "")
     return template.format(**kwargs) if template else ""
-    

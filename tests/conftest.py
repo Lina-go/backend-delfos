@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import pytest
+
 from src.config.settings import Settings
 
 
@@ -8,4 +9,3 @@ from src.config.settings import Settings
 def settings():
     """Provide settings fixture."""
     return Settings()
-

@@ -41,7 +41,9 @@ def build_chart():
         font={"family": "Inter, Arial, sans-serif", "size": 14},
         margin={"l": 60, "r": 30, "t": 70, "b": 50},
     )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(0,0,0,0.05)", showspikes=True, spikemode="across")
+    fig.update_xaxes(
+        showgrid=True, gridcolor="rgba(0,0,0,0.05)", showspikes=True, spikemode="across"
+    )
     fig.update_yaxes(showgrid=True, gridcolor="rgba(0,0,0,0.05)", zeroline=False)
     return fig
 
@@ -97,4 +99,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

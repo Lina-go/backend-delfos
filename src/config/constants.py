@@ -8,9 +8,9 @@ from enum import Enum
 class QueryType(str, Enum):
     """Query classification types."""
 
-    DATA_QUESTION = "data_question" # Proceed to the rest of pipeline
-    GENERAL = "general" # Reject the question: Not about data
-    OUT_OF_SCOPE = "out_of_scope" # Reject the question: Not in the DB
+    DATA_QUESTION = "data_question"  # Proceed to the rest of pipeline
+    GENERAL = "general"  # Reject the question: Not about data
+    OUT_OF_SCOPE = "out_of_scope"  # Reject the question: Not in the DB
 
 
 class Intent(str, Enum):
@@ -19,17 +19,20 @@ class Intent(str, Enum):
     NIVEL_PUNTUAL = "nivel_puntual"
     REQUIERE_VIZ = "requiere_visualizacion"
 
+
 class PatternType(str, Enum):
     """Pattern type classification for data questions."""
+
     COMPARACION = "comparacion"
     RELACION = "relacion"
     PROYECCION = "proyeccion"
     SIMULACION = "simulacion"
 
+
 class Archetype(str, Enum):
     """Archetype classification for data questions."""
 
-    ARCHETYPE_A  = "A"
+    ARCHETYPE_A = "A"
     ARCHETYPE_B = "B"
     ARCHETYPE_C = "C"
     ARCHETYPE_D = "D"
@@ -64,8 +67,10 @@ class ColumnType(str, Enum):
     DATETIME = "datetime"
     BOOLEAN = "boolean"
 
+
 class PipelineStep(str, Enum):
     """Pipeline execution steps."""
+
     TRIAGE = "triage"
     INTENT = "intent"
     SCHEMA = "schema"
@@ -78,8 +83,10 @@ class PipelineStep(str, Enum):
     FORMAT = "format"
     RESPONSE = "response"
 
+
 class PipelineStepDescription(str, Enum):
     """Pipeline execution step descriptions."""
+
     TRIAGE = "Triage the user's question to determine the intent and type of patron"
     INTENT = "Determine the intent of the user's question"
     SCHEMA = "Generate the schema to answer the user's question"
@@ -91,8 +98,10 @@ class PipelineStepDescription(str, Enum):
     GRAPH = "Generate the graph to answer the user's question"
     FORMAT = "Format the response to answer the user's question"
 
+
 class PipelineStatus(str, Enum):
     """Pipeline execution status."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"

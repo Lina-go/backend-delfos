@@ -1,10 +1,12 @@
 """
 Retry utilities for handling rate limits and transient errors.
 """
+
 import asyncio
 import logging
 import re
-from typing import Callable, Any, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -50,24 +52,21 @@ async def run_with_retry(
                 or "rate limit is exceeded" in error_str
             )
 
-            if is_rate_limit and retry_on_rate_limit:
-                if attempt < max_retries - 1:
-                    # Try to extract wait time from error message
-                    wait_time_match = re.search(
-                        r"(\d+)\s*seconds?", str(e), re.IGNORECASE
-                    )
-                    if wait_time_match:
-                        wait_time = float(wait_time_match.group(1))
-                    else:
-                        # Use exponential backoff
-                        wait_time = initial_delay * (backoff_factor ** attempt)
+            if is_rate_limit and retry_on_rate_limit and attempt < max_retries - 1:
+                # Try to extract wait time from error message
+                wait_time_match = re.search(r"(\d+)\s*seconds?", str(e), re.IGNORECASE)
+                if wait_time_match:
+                    wait_time = float(wait_time_match.group(1))
+                else:
+                    # Use exponential backoff
+                    wait_time = initial_delay * (backoff_factor**attempt)
 
-                    logger.warning(
-                        f"Rate limit detected (attempt {attempt + 1}/{max_retries}). "
-                        f"Waiting {wait_time:.1f} seconds before retry..."
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
+                logger.warning(
+                    f"Rate limit detected (attempt {attempt + 1}/{max_retries}). "
+                    f"Waiting {wait_time:.1f} seconds before retry..."
+                )
+                await asyncio.sleep(wait_time)
+                continue
 
             # If not rate limit or max retries reached, raise the exception
             raise
@@ -76,4 +75,3 @@ async def run_with_retry(
     if last_exception:
         raise last_exception
     raise Exception("Max retries exceeded")
-

@@ -1,6 +1,7 @@
 """Tests for triage service."""
 
 import pytest
+
 from src.services.triage.classifier import TriageClassifier
 
 
@@ -18,4 +19,3 @@ async def test_triage_classifier_general(settings):
     classifier = TriageClassifier(settings)
     result = await classifier.classify("What is a loan?")
     assert result["query_type"] in ["data_question", "general", "out_of_scope"]
-

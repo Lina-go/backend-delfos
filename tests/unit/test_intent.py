@@ -1,6 +1,7 @@
 """Tests for intent service."""
 
 import pytest
+
 from src.services.intent.classifier import IntentClassifier
 
 
@@ -18,4 +19,3 @@ async def test_intent_classifier_requiere_viz(settings):
     classifier = IntentClassifier(settings)
     result = await classifier.classify("Cómo ha evolucionado el número de clientes?")
     assert result["intent"] in ["nivel_puntual", "requiere_viz"]
-

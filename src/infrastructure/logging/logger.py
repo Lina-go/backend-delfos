@@ -1,9 +1,9 @@
 """Structured logging."""
 
-import logging
 import json
-from typing import Dict, Any, Optional
+import logging
 from datetime import datetime
+from typing import Any
 
 
 class StructuredLogger:
@@ -16,11 +16,11 @@ class StructuredLogger:
     def log_step(
         self,
         step: str,
-        state: Dict[str, Any],
-        duration_ms: Optional[float] = None,
-    ):
+        state: dict[str, Any],
+        duration_ms: float | None = None,
+    ) -> None:
         """Log a pipeline step."""
-        log_data = {
+        log_data: dict[str, Any] = {
             "step": step,
             "timestamp": datetime.utcnow().isoformat(),
             "state": state,
@@ -34,10 +34,10 @@ class StructuredLogger:
         self,
         step: str,
         error: Exception,
-        context: Optional[Dict[str, Any]] = None,
-    ):
+        context: dict[str, Any] | None = None,
+    ) -> None:
         """Log an error with context."""
-        log_data = {
+        log_data: dict[str, Any] = {
             "step": step,
             "error": str(error),
             "error_type": type(error).__name__,
@@ -47,4 +47,3 @@ class StructuredLogger:
             log_data["context"] = context
 
         self.logger.error(json.dumps(log_data), exc_info=True)
-

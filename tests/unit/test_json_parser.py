@@ -1,6 +1,5 @@
 """Tests for JSON parser."""
 
-import pytest
 from src.utils.json_parser import JSONParser
 
 
@@ -30,4 +29,3 @@ def test_extract_json_invalid():
     text = "not json at all"
     result = JSONParser.extract_json(text)
     assert result == {}
-

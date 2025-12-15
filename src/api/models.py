@@ -1,7 +1,8 @@
 """Request/Response models for API endpoints."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
-from typing import Optional, List
 
 
 class ChatRequest(BaseModel):
@@ -15,15 +16,17 @@ class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
 
     patron: str = Field(..., description="Analytical pattern")
-    datos: List[dict] = Field(..., description="SQL query results")
+    datos: list[dict[str, Any]] = Field(..., description="SQL query results")
     arquetipo: str = Field(..., description="Pattern type (A-N)")
     visualizacion: str = Field(..., description="YES or NO")
-    tipo_grafica: Optional[str] = Field(None, description="Chart type")
-    imagen: Optional[str] = Field(None, description="Chart image URL")
-    html_url: Optional[str] = Field(None, description="Chart HTML URL")
-    link_power_bi: Optional[str] = Field(None, description="Power BI URL")
-    insight: Optional[str] = Field(None, description="Generated insight")
-    error: Optional[str] = Field("", description="Error message if error occurred, empty string otherwise")
+    tipo_grafica: str | None = Field(None, description="Chart type")
+    imagen: str | None = Field(None, description="Chart image URL")
+    html_url: str | None = Field(None, description="Chart HTML URL")
+    link_power_bi: str | None = Field(None, description="Power BI URL")
+    insight: str | None = Field(None, description="Generated insight")
+    error: str | None = Field(
+        "", description="Error message if error occurred, empty string otherwise"
+    )
 
 
 class HealthResponse(BaseModel):
@@ -36,5 +39,4 @@ class HealthResponse(BaseModel):
 class SchemaResponse(BaseModel):
     """Response model for schema endpoint."""
 
-    tables: List[dict] = Field(..., description="List of tables with schema information")
-
+    tables: list[dict[str, Any]] = Field(..., description="List of tables with schema information")

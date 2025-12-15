@@ -1,11 +1,10 @@
 """Azure Blob Storage client."""
 
 import logging
-from typing import Optional
 
-from azure.storage.blob.aio import BlobServiceClient
-from azure.storage.blob import ContentSettings
 from azure.core.exceptions import AzureError
+from azure.storage.blob import ContentSettings
+from azure.storage.blob.aio import BlobServiceClient
 
 from src.config.settings import Settings
 from src.infrastructure.llm.factory import get_shared_credential
@@ -18,34 +17,34 @@ class BlobStorageClient:
 
     def __init__(self, settings: Settings):
         """Initialize blob storage client.
-        
+
         Args:
             settings: Application settings containing Azure Storage configuration
         """
         self.settings = settings
         self.credential = get_shared_credential()
-        self._client: Optional[BlobServiceClient] = None
+        self._client: BlobServiceClient | None = None
 
-    def _get_client(self, account_url: Optional[str] = None) -> BlobServiceClient:
+    def _get_client(self, account_url: str | None = None) -> BlobServiceClient:
         """
         Get or create BlobServiceClient instance (reuses existing client if available).
-        
+
         Args:
             account_url: Optional storage account URL (overrides settings)
-            
+
         Returns:
             BlobServiceClient instance
-            
+
         Raises:
             ValueError: If neither connection string nor account URL is configured
         """
         # Reuse existing client if available
         if self._client is not None:
             return self._client
-        
+
         # Use provided URL or fall back to settings
         storage_url = account_url or self.settings.azure_storage_account_url
-        
+
         # Prefer connection string if available
         if self.settings.azure_storage_connection_string:
             logger.debug("Using connection string for blob storage")
@@ -53,16 +52,13 @@ class BlobStorageClient:
                 self.settings.azure_storage_connection_string
             )
             return self._client
-        
+
         # Use account URL with credential
         if storage_url:
             logger.debug(f"Using account URL with credential: {storage_url}")
-            self._client = BlobServiceClient(
-                account_url=storage_url,
-                credential=self.credential
-            )
+            self._client = BlobServiceClient(account_url=storage_url, credential=self.credential)
             return self._client
-        
+
         raise ValueError(
             "Azure Storage configuration required. "
             "Set either 'azure_storage_connection_string' or 'azure_storage_account_url' in settings."
@@ -73,55 +69,59 @@ class BlobStorageClient:
         container_name: str,
         blob_name: str,
         data: bytes,
-        account_url: Optional[str] = None,
-        content_type: Optional[str] = None,
+        account_url: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         """
         Upload blob to Azure Storage.
-        
+
         Args:
             container_name: Container name (defaults to settings.azure_storage_container_name)
             blob_name: Blob name
             data: Blob data as bytes
             account_url: Storage account URL (optional, overrides settings)
             content_type: Content type (e.g., 'image/png', 'text/html')
-            
+
         Returns:
             URL to the uploaded blob
-            
+
         Raises:
             ValueError: If storage configuration is missing
             AzureError: If upload fails
         """
         if not data:
             raise ValueError("Blob data cannot be empty")
-        
+
         # Use default container from settings if not provided
         if not container_name:
             container_name = self.settings.azure_storage_container_name or "charts"
-        
+
         try:
             client = self._get_client(account_url)
-               
+
             # Get blob client and upload
-            blob_client = client.get_blob_client(
-                container=container_name,
-                blob=blob_name
-            )
-            
-            # Upload with content type if provided
-            upload_kwargs = {"data": data}
-            if content_type:
-                upload_kwargs["content_settings"] = ContentSettings(content_type=content_type)
-            
+            blob_client = client.get_blob_client(container=container_name, blob=blob_name)
+
             logger.debug(f"Uploading blob '{blob_name}' to container '{container_name}'")
-            await blob_client.upload_blob(**upload_kwargs, overwrite=True)
-            
+
+            if content_type:
+                content_settings = ContentSettings(content_type=content_type)
+                await blob_client.upload_blob(
+                    data=data,
+                    overwrite=True,
+                    content_settings=content_settings,
+                )
+            else:
+                await blob_client.upload_blob(
+                    data=data,
+                    overwrite=True,
+                )
+
             # Generate and return URL
             blob_url = blob_client.url
             logger.info(f"Blob uploaded successfully: {blob_url}")
             return blob_url
-            
+
         except ValueError as e:
             logger.error(f"Configuration error: {e}")
             raise
@@ -136,32 +136,29 @@ class BlobStorageClient:
         self,
         container_name: str,
         blob_name: str,
-        account_url: Optional[str] = None,
+        account_url: str | None = None,
     ) -> str:
         """
         Get URL for a blob (without checking if it exists).
-        
+
         Args:
             container_name: Container name (defaults to settings.azure_storage_container_name)
             blob_name: Blob name
             account_url: Storage account URL (optional, overrides settings)
-            
+
         Returns:
             Blob URL
-            
+
         Raises:
             ValueError: If storage configuration is missing
         """
         # Use default container from settings if not provided
         if not container_name:
             container_name = self.settings.azure_storage_container_name or "charts"
-        
+
         try:
             client = self._get_client(account_url)
-            blob_client = client.get_blob_client(
-                container=container_name,
-                blob=blob_name
-            )
+            blob_client = client.get_blob_client(container=container_name, blob=blob_name)
             return blob_client.url
         except ValueError as e:
             logger.error(f"Configuration error: {e}")
@@ -174,25 +171,22 @@ class BlobStorageClient:
         self,
         container_name: str,
         blob_name: str,
-        account_url: Optional[str] = None,
+        account_url: str | None = None,
     ) -> bool:
         """
         Check if a blob exists.
-        
+
         Args:
             container_name: Container name
             blob_name: Blob name
             account_url: Storage account URL (optional)
-            
+
         Returns:
             True if blob exists, False otherwise
         """
         try:
             client = self._get_client(account_url)
-            blob_client = client.get_blob_client(
-                container=container_name,
-                blob=blob_name
-            )
+            blob_client = client.get_blob_client(container=container_name, blob=blob_name)
             await blob_client.get_blob_properties()
             return True
         except AzureError:
@@ -205,25 +199,22 @@ class BlobStorageClient:
         self,
         container_name: str,
         blob_name: str,
-        account_url: Optional[str] = None,
+        account_url: str | None = None,
     ) -> bool:
         """
         Delete a blob.
-        
+
         Args:
             container_name: Container name
             blob_name: Blob name
             account_url: Storage account URL (optional)
-            
+
         Returns:
             True if deleted, False if blob doesn't exist
         """
         try:
             client = self._get_client(account_url)
-            blob_client = client.get_blob_client(
-                container=container_name,
-                blob=blob_name
-            )
+            blob_client = client.get_blob_client(container=container_name, blob=blob_name)
             await blob_client.delete_blob()
             logger.info(f"Blob '{blob_name}' deleted from container '{container_name}'")
             return True
@@ -236,8 +227,8 @@ class BlobStorageClient:
         except Exception as e:
             logger.error(f"Unexpected error deleting blob: {e}", exc_info=True)
             raise
-    
-    async def close(self):
+
+    async def close(self) -> None:
         """Close the blob storage client."""
         if self._client:
             await self._client.close()

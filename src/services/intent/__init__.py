@@ -1,2 +1,1 @@
 """Intent service module."""
-

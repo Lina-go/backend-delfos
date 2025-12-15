@@ -2,13 +2,16 @@
 Archetype definitions (A-N) for intent classification.
 """
 
-from dataclasses import dataclass, asdict
-from src.config.constants import Archetype, PatternType, Intent, ChartType
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from src.config.constants import Archetype, ChartType, Intent, PatternType
 
 
 @dataclass(frozen=True)
 class ArchetypeInfo:
     """Definition of a query archetype."""
+
     archetype: Archetype
     name: str
     template: str
@@ -18,10 +21,10 @@ class ArchetypeInfo:
     pattern_type: PatternType
     default_chart: ChartType | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Get all information for the archetype as a dictionary."""
         return asdict(self)
-    
+
     def get_all_info_as_string(self) -> str:
         """Get all information for the archetype as a string."""
         return f"Archetype: {self.archetype}\nName: {self.name}\nTemplate: {self.template}\nDescription: {self.description}\nExamples: {self.examples}"
@@ -29,7 +32,7 @@ class ArchetypeInfo:
 
 ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
     # ==========================================================================
-    # Comparación (A-H)
+    # Comparison (A–H)
     # ==========================================================================
     Archetype.ARCHETYPE_A: ArchetypeInfo(
         archetype=Archetype.ARCHETYPE_A,
@@ -109,7 +112,7 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
             "¿Cómo se compara el monto promedio transado entre clientes naturales y jurídicos?",
         ],
     ),
-        Archetype.ARCHETYPE_G: ArchetypeInfo(
+    Archetype.ARCHETYPE_G: ArchetypeInfo(
         archetype=Archetype.ARCHETYPE_G,
         name="ranking_los_mas",
         template="¿Cuáles {unidades} presentan el mayor/menor {métrica} dentro de {conjunto} en {período}?",
@@ -136,7 +139,7 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         ],
     ),
     # ==========================================================================
-    # Relación (I-J)
+    # Relationship (I–J)
     # ==========================================================================
     Archetype.ARCHETYPE_I: ArchetypeInfo(
         archetype=Archetype.ARCHETYPE_I,
@@ -165,7 +168,7 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         ],
     ),
     # ==========================================================================
-    # Proyección (K-L)
+    # Projection (K–L)
     # ==========================================================================
     Archetype.ARCHETYPE_K: ArchetypeInfo(
         archetype=Archetype.ARCHETYPE_K,
@@ -194,7 +197,7 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         ],
     ),
     # ==========================================================================
-    # Simulación (M-N)
+    # Simulation (M–N)
     # ==========================================================================
     Archetype.ARCHETYPE_M: ArchetypeInfo(
         archetype=Archetype.ARCHETYPE_M,
@@ -229,25 +232,31 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
 # Helper functions
 ############################################################
 
+
 def get_all_archetypes() -> list[ArchetypeInfo]:
     """Get all archetypes."""
     return list(ARCHETYPES.values())
+
 
 def get_archetype_info(archetype: Archetype) -> ArchetypeInfo:
     """Get archetype info by archetype."""
     return ARCHETYPES[archetype]
 
+
 def get_all_archetypes_for_prompt() -> str:
     """Get all archetypes for prompt."""
     return "\n\n".join(info.get_all_info_as_string() for info in ARCHETYPES.values())
+
 
 def get_archetypes_by_pattern_type(pattern_type: PatternType) -> list[ArchetypeInfo]:
     """Get all archetypes for a pattern type."""
     return [a for a in ARCHETYPES.values() if a.pattern_type == pattern_type]
 
+
 def get_archetypes_by_intent(intent: Intent) -> list[ArchetypeInfo]:
     """Get all archetypes for an intent."""
     return [a for a in ARCHETYPES.values() if a.intent == intent]
+
 
 def get_archetype_name(archetype_letter: str) -> str:
     """Get archetype name by archetype letter.

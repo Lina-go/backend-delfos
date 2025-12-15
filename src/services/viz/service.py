@@ -1,18 +1,18 @@
 """Visualization service."""
 
-import logging
 import json
-from typing import Dict, Any, List, Optional
+import logging
+from typing import Any
 
+from src.config.prompts import build_viz_prompt
 from src.config.settings import Settings
-from agent_framework import ChatAgent 
 from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import azure_agent_client, get_shared_credential
 from src.infrastructure.mcp.client import mcp_connection
-from src.config.prompts import build_viz_prompt
 from src.services.viz.models import VizResult
 
 logger = logging.getLogger(__name__)
+
 
 class VisualizationService:
     """Orchestrates visualization flow."""
@@ -23,13 +23,13 @@ class VisualizationService:
 
     async def generate(
         self,
-        sql_results: List[Any],
+        sql_results: list[Any],
         user_id: str,
         question: str,
-        sql_query: Optional[str] = "",  
-        tablas: Optional[List[str]] = None, 
-        resumen: Optional[str] = "",   
-    ) -> Dict[str, Any]:
+        sql_query: str | None = "",
+        tablas: list[str] | None = None,
+        resumen: str | None = "",
+    ) -> dict[str, Any]:
         """
         Generate visualization for SQL results.
         """
@@ -46,7 +46,7 @@ class VisualizationService:
                 },
                 "original_question": question,
             }
-            
+
             input_str = json.dumps(viz_input, ensure_ascii=False)
 
             system_prompt = build_viz_prompt()
@@ -56,30 +56,32 @@ class VisualizationService:
 
             credential = get_shared_credential()
 
-            async with azure_agent_client(
-                self.settings, model, credential, #max_iterations=2
-            ) as client:
-                async with mcp_connection(self.settings) as mcp:
-                    # Creamos el agente directamente
-                    agent = client.create_agent(
-                        name="VisualizationService",
-                        instructions=system_prompt,
-                        tools=[mcp],
-                        max_tokens=viz_max_tokens,
-                        temperature=viz_temperature,
-                    )
-                    
-                    # Ejecutamos
-                    result_model = await run_agent_with_format(
-                        agent, 
-                        input_str, 
-                        response_format=VizResult
-                    )
-            
+            async with (
+                azure_agent_client(
+                    self.settings,
+                    model,
+                    credential,  # max_iterations=2
+                ) as client,
+                mcp_connection(self.settings) as mcp,
+            ):
+                agent = client.create_agent(
+                    name="VisualizationService",
+                    instructions=system_prompt,
+                    tools=[mcp],
+                    max_tokens=viz_max_tokens,
+                    temperature=viz_temperature,
+                )
+
+                result_model = await run_agent_with_format(
+                    agent,
+                    input_str,
+                    response_format=VizResult,
+                )
+
             if isinstance(result_model, VizResult):
                 return result_model.model_dump()
-            
-            # Fallback
+
+            # Fallback if the model does not return a VizResult instance
             return {
                 "tipo_grafico": None,
                 "metric_name": None,
@@ -87,7 +89,7 @@ class VisualizationService:
                 "powerbi_url": None,
                 "run_id": None,
                 "image_url": None,
-                "error": "Formato inválido"
+                "error": "Invalid format",
             }
 
         except Exception as e:
@@ -97,5 +99,5 @@ class VisualizationService:
                 "powerbi_url": None,
                 "image_url": None,
                 "run_id": None,
-                "error": str(e)
+                "error": str(e),
             }

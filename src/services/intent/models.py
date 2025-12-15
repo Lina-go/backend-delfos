@@ -1,8 +1,8 @@
 """Intent service models."""
 
 from pydantic import BaseModel
-from typing import Optional
-from src.config.constants import Intent, PatternType
+
+from src.config.constants import Intent
 
 
 class IntentResult(BaseModel):
@@ -12,5 +12,4 @@ class IntentResult(BaseModel):
     intent: Intent
     tipo_patron: str  # Pattern type as single letter (A-N)
     arquetipo: str  # Analytical archetype
-    razon: Optional[str] = None  # Reasoning in Spanish
-
+    razon: str | None = None  # Reasoning in Spanish

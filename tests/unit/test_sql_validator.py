@@ -1,6 +1,5 @@
 """Tests for SQL validation service."""
 
-import pytest
 from src.services.sql.validation import SQLValidationService
 
 
@@ -26,4 +25,3 @@ def test_sql_validator_no_select():
     result = validator.validate("UPDATE dbo.Customers SET name='test'")
     assert not result["is_valid"]
     assert "SELECT" in str(result["errors"])
-

@@ -1,14 +1,15 @@
 """Agent factory helpers."""
 
-from typing import Any
+import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
-from azure.identity.aio import DefaultAzureCredential
-from agent_framework_azure_ai import AzureAIAgentClient
 from agent_framework.anthropic import AnthropicClient
+from agent_framework_azure_ai import AzureAIAgentClient
+from azure.identity.aio import DefaultAzureCredential
 
 from src.config.settings import Settings
-import logging
+
 logger = logging.getLogger(__name__)
 
 _shared_credential: DefaultAzureCredential | None = None
@@ -17,10 +18,10 @@ _shared_credential: DefaultAzureCredential | None = None
 def get_shared_credential() -> DefaultAzureCredential:
     """
     Get or create a shared DefaultAzureCredential instance.
-    
+
     This ensures all services use the same credential instance,
     avoiding duplicate credential creation and improving performance.
-    
+
     Returns:
         Shared DefaultAzureCredential instance
     """
@@ -30,16 +31,17 @@ def get_shared_credential() -> DefaultAzureCredential:
     return _shared_credential
 
 
-async def close_shared_credential():
+async def close_shared_credential() -> None:
     """
     Close the shared credential instance.
-    
+
     Should be called during application shutdown to properly clean up resources.
     """
     global _shared_credential
     if _shared_credential is not None:
         await _shared_credential.close()
         _shared_credential = None
+
 
 def is_anthropic_model(model: str) -> bool:
     """Check if model is Anthropic (Claude)."""
@@ -52,10 +54,10 @@ async def azure_agent_client(
     model: str,
     credential: DefaultAzureCredential,
     max_iterations: int = 5,
-):
+) -> Any:
     """
     Azure AI (Foundry) agent client as context manager.
-    
+
     The `model` argument must be the deployment name configured in your project.
     """
     async with AzureAIAgentClient(
@@ -77,14 +79,14 @@ def create_anthropic_agent(
     model: str | None = None,
     max_tokens: int = 8192,
     response_format: Any | None = None,
-):
+) -> Any:
     """
     Create an Anthropic (Claude) agent.
-    
+
     Usage:
         agent = create_anthropic_agent(settings, "SQLAgent", prompt, mcp, response_format=SQLResult)
         response = await run_single_agent(agent, input)
-        
+
     Args:
         settings: Application settings
         name: Agent name
@@ -95,11 +97,10 @@ def create_anthropic_agent(
         response_format: Optional Pydantic BaseModel for structured output
     """
 
-    
     final_model = model or settings.sql_agent_model
-    
+
     logger.debug(f"Creating Anthropic agent '{name}' with model: {final_model}")
-    
+
     client = AnthropicClient(
         model_id=final_model,
         api_key=settings.anthropic_api_key,
@@ -110,9 +111,9 @@ def create_anthropic_agent(
         "tools": tools,
         "max_tokens": max_tokens,
         "seed": 42,
-        "temperature": 0.0
+        "temperature": 0.0,
     }
     if response_format:
         agent_kwargs["response_format"] = response_format
-    
+
     return client.create_agent(**agent_kwargs)

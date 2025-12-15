@@ -1,8 +1,9 @@
 """SQL service models."""
 
 from dataclasses import dataclass, field
+from typing import Any
+
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
 
 
 class SQLResult(BaseModel):
@@ -10,18 +11,18 @@ class SQLResult(BaseModel):
 
     pregunta_original: str
     sql: str
-    tablas: List[str]
+    tablas: list[str]
     resumen: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class SQLExecutionResult(BaseModel):
     """Result from SQL execution with formatted results."""
 
-    resultados: List[Dict[str, Any]]
+    resultados: list[dict[str, Any]]
     total_filas: int
     resumen: str
-    insights: Optional[str] = None
+    insights: str | None = None
 
 
 @dataclass
@@ -29,6 +30,5 @@ class ValidationResult:
     """Result from SQL validation."""
 
     is_valid: bool
-    errors: List[str]
-    warnings: List[str] = field(default_factory=list)
-
+    errors: list[str]
+    warnings: list[str] = field(default_factory=list)

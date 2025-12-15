@@ -1,22 +1,21 @@
 """Graph service models."""
 
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 
 @dataclass
 class GraphResult:
     """Result from graph generation."""
 
-    image_url: Optional[str]
+    image_url: str | None
     chart_type: str
-    run_id: Optional[str] = None
-    html_url: Optional[str] = None
-    png_url: Optional[str] = None
-    html_path: Optional[str] = None
-    png_path: Optional[str] = None
-    title: Optional[str] = None
-
+    run_id: str | None = None
+    html_url: str | None = None
+    png_url: str | None = None
+    html_path: str | None = None
+    png_path: str | None = None
+    title: str | None = None
 
 
 @dataclass
@@ -24,7 +23,6 @@ class GraphConfig:
     """Configuration for graph generation."""
 
     chart_type: str
-    data_points: List[Dict[str, Any]]
-    colors: List[str]
-    title: Optional[str] = None
-
+    data_points: list[dict[str, Any]]
+    colors: list[str]
+    title: str | None = None

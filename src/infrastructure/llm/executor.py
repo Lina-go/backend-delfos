@@ -1,89 +1,96 @@
 """
 Agent executor for running agents in isolation.
 """
+
 import logging
-from typing import Any, TypeVar, Optional, Type
+from typing import Any, TypeVar, cast
+
 from pydantic import BaseModel, ValidationError
 
-from src.utils.retry import run_with_retry
 from src.utils.json_parser import JSONParser
+from src.utils.retry import run_with_retry
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+
 async def run_single_agent(agent: Any, input_text: str) -> str:
-    """
-    Ejecuta un agente en aislamiento usando su método nativo run().
-    """
-    async def _execute_agent():
+    """Run a single agent in isolation using its native ``run`` method."""
+
+    async def _execute_agent() -> str:
         response = await agent.run(input_text)
-        
-        # Logging para depuración
+
+        # Logging for debugging
         logger.info("--------------------------------")
         logger.info(f"Agent Response Text: {response.text}")
         logger.info("--------------------------------")
-        
-        return response.text
-    
-    return await run_with_retry(
-        _execute_agent,
-        max_retries=2,  
-        initial_delay=2.0, 
-        backoff_factor=2.0,
-        retry_on_rate_limit=True,
+
+        return str(response.text)
+
+    result = cast(
+        str,
+        await run_with_retry(
+            _execute_agent,
+            max_retries=2,
+            initial_delay=2.0,
+            backoff_factor=2.0,
+            retry_on_rate_limit=True,
+        ),
     )
+    return result
 
 
 async def run_agent_with_format(
     agent: Any,
     input_text: str,
-    response_format: Optional[Type[T]] = None,
+    response_format: type[T] | None = None,
 ) -> T | str:
+    """Run an agent and parse its response into a Pydantic model.
+
+    Validation/format errors are captured to avoid unnecessary retries.
     """
-    Ejecuta el agente y parsea la respuesta a un modelo Pydantic.
-    Captura errores de validación para evitar reintentos innecesarios.
-    """
-    async def _execute_agent():
-        # 1. Ejecutar el agente (invoca herramientas)
+
+    async def _execute_agent() -> T | str:
+        # 1. Execute the agent (invokes tools)
         response = await agent.run(input_text)
-        
-        # Logging detallado
+
+        # Detailed logging
         logger.info("--------------------------------")
         logger.info(f"Respuesta cruda: {response.text}")
         logger.info(f"Mensajes en historial: {len(response.messages)}")
         for message in response.messages:
             logger.info(f"Role: {message.role}, Text: {message.text}")
         logger.info("--------------------------------")
-        
-        text_result = response.text 
 
-        # 2. Intentar parsear de forma segura
-        # El try/except aquí es CLAVE para evitar que run_with_retry ejecute todo de nuevo
+        text_result: str = str(response.text)
+
         if response_format and text_result:
             try:
                 json_data = JSONParser.extract_json(text_result)
-                
+
                 if json_data:
-                    # Validar con Pydantic
                     return response_format(**json_data)
                 else:
-                    logger.warning("No se encontró JSON válido en la respuesta.")
-            
+                    logger.warning("No valid JSON found in the response.")
+
             except (ValidationError, ValueError, Exception) as e:
-                # Si falla el parseo, LOGUEAMOS pero NO lanzamos el error.
-                # Devolvemos el texto crudo para que el pipeline continúe o falle suavemente.
-                logger.error(f"Error de formato/validación (NO se reintentará): {e}")
+                logger.error(
+                    "Formatting/validation error (will NOT be retried): %s",
+                    e,
+                )
                 return text_result
 
         return text_result
 
-    # run_with_retry solo reintentará errores de red o del modelo,
-    # no errores de formato de salida.
-    return await run_with_retry(
-        _execute_agent,
-        max_retries=2,
-        initial_delay=2.0,
-        backoff_factor=2.0,
-        retry_on_rate_limit=True,
+    result = cast(
+        T | str,
+        await run_with_retry(
+            _execute_agent,
+            max_retries=2,
+            initial_delay=2.0,
+            backoff_factor=2.0,
+            retry_on_rate_limit=True,
+        ),
     )
+    return result

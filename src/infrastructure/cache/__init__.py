@@ -7,4 +7,3 @@ __all__ = [
     "SchemaCache",
     "SemanticCache",
 ]
-

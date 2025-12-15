@@ -1,7 +1,7 @@
 """Graph service orchestrator."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Any
 
 from src.config.settings import Settings
 from src.services.graph.executor import GraphExecutor
@@ -22,18 +22,18 @@ class GraphService:
         self,
         run_id: str,
         chart_type: str,
-        data_points: List[Dict[str, Any]],
+        data_points: list[dict[str, Any]],
         title: str,
     ) -> GraphResult:
         """
         Generate graph image.
-        
+
         Args:
             run_id: Run ID from VizAgent
             chart_type: Chart type
             data_points: Data points
             title: Title of the graph
-            
+
         Returns:
             GraphResult with image URL
         """
@@ -44,7 +44,7 @@ class GraphService:
                 data_points=data_points,
                 title=title,
             )
-            
+
             return GraphResult(
                 image_url=result["image_url"],
                 html_url=result.get("html_url"),
@@ -56,4 +56,3 @@ class GraphService:
         except Exception as e:
             logger.error(f"Graph service error: {e}", exc_info=True)
             raise
-

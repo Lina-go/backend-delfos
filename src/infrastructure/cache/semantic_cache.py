@@ -1,7 +1,7 @@
 """Semantic cache for NL → SQL/Results."""
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -9,17 +9,17 @@ logger = logging.getLogger(__name__)
 class SemanticCache:
     """Semantic cache for query results (future optimization)."""
 
-    _cache: Dict[str, Any] = {}
+    _cache: dict[str, Any] = {}
     _hits: int = 0
     _misses: int = 0
 
     @classmethod
-    def get(cls, key: str) -> Optional[Any]:
+    def get(cls, key: str) -> Any | None:
         """Get cached result.
-        
+
         Args:
             key: Cache key (typically a hash of the query)
-            
+
         Returns:
             Cached result or None if not found
         """
@@ -32,7 +32,7 @@ class SemanticCache:
     @classmethod
     def set(cls, key: str, value: Any) -> None:
         """Set cached result.
-        
+
         Args:
             key: Cache key
             value: Result data to cache
@@ -42,10 +42,10 @@ class SemanticCache:
     @classmethod
     def delete(cls, key: str) -> bool:
         """Delete a specific cache entry.
-        
+
         Args:
             key: Cache key to delete
-            
+
         Returns:
             True if key was deleted, False if key didn't exist
         """
@@ -62,9 +62,9 @@ class SemanticCache:
         cls._misses = 0
 
     @classmethod
-    def get_stats(cls) -> Dict[str, Any]:
+    def get_stats(cls) -> dict[str, Any]:
         """Get cache statistics.
-        
+
         Returns:
             Dictionary with cache statistics:
             - size: Number of cached entries
@@ -80,4 +80,3 @@ class SemanticCache:
             "misses": cls._misses,
             "hit_rate": round(hit_rate, 2),
         }
-

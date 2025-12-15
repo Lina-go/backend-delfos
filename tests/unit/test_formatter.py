@@ -1,8 +1,9 @@
 """Tests for response formatter."""
 
 import pytest
-from src.services.formatting.formatter import ResponseFormatter
+
 from src.orchestrator.state import PipelineState
+from src.services.formatting.formatter import ResponseFormatter
 
 
 @pytest.mark.asyncio
@@ -17,4 +18,3 @@ async def test_response_formatter(settings):
     result = await formatter.format(state)
     assert "patron" in result
     assert "datos" in result
-

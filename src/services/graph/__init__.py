@@ -1,2 +1,1 @@
 """Graph service module."""
-

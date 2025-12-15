@@ -1,20 +1,20 @@
 """Response formatter service with LLM or code-based formatting."""
 
 import logging
-from typing import Dict, Any
+from typing import Any
 
+from src.config.prompts import build_format_prompt
 from src.config.settings import Settings
-from src.orchestrator.state import PipelineState
 from src.infrastructure.llm.executor import run_single_agent
 from src.infrastructure.llm.factory import (
-    is_anthropic_model,
     azure_agent_client,
     create_anthropic_agent,
     get_shared_credential,
+    is_anthropic_model,
 )
-from src.config.prompts import build_format_prompt
-from src.utils.json_parser import JSONParser
+from src.orchestrator.state import PipelineState
 from src.services.formatting.code_formatter import CodeFormatter
+from src.utils.json_parser import JSONParser
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +27,15 @@ class ResponseFormatter:
         self.settings = settings
         self.code_formatter = CodeFormatter()
 
-    async def format(self, state: PipelineState) -> Dict[str, Any]:
+    async def format(self, state: PipelineState) -> dict[str, Any]:
         """
         Format final response from pipeline state.
-        
+
         Uses LLM formatting if `use_llm_formatting=True`, otherwise uses code-based formatting.
-        
+
         Args:
             state: Pipeline state object
-            
+
         Returns:
             Formatted response dictionary
         """
@@ -44,7 +44,7 @@ class ResponseFormatter:
         else:
             return self.code_formatter.format(state)
 
-    async def _format_with_llm(self, state: PipelineState) -> Dict[str, Any]:
+    async def _format_with_llm(self, state: PipelineState) -> dict[str, Any]:
         """Format response using LLM agent."""
         try:
             # Build input for formatter
@@ -109,4 +109,3 @@ class ResponseFormatter:
             logger.error(f"LLM formatting error: {e}", exc_info=True)
             # Fallback to code-based formatting on error
             return self.code_formatter.format(state)
-

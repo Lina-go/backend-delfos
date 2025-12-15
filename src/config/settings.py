@@ -3,6 +3,7 @@ Application settings using Pydantic BaseSettings.
 """
 
 from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,7 +37,7 @@ class Settings(BaseSettings):
     ######################################
 
     anthropic_api_key: str | None = None
-    
+
     ######################################
     # Agent model configurations
     ######################################
@@ -65,7 +66,7 @@ class Settings(BaseSettings):
     verification_agent_model: str = "gpt-4o-mini"
     verification_temperature: float = 0.0
     verification_max_tokens: int = 1024
-    
+
     # Viz Agent
     viz_agent_model: str = "gpt-4o-mini"
     viz_temperature: float = 0.0
@@ -88,7 +89,7 @@ class Settings(BaseSettings):
     mcp_server_url: str = "https://func-mcp-n2z2m7tmh3kvk.azurewebsites.net/mcp"
     mcp_timeout: int = 60
     mcp_sse_timeout: int = 30
-    
+
     ######################################
     # Azure Blob Storage
     ######################################
@@ -100,7 +101,7 @@ class Settings(BaseSettings):
     ######################################
     # Pipeline configuration
     ######################################
-    
+
     # Pipeline settings
     pipeline_name: str = "nl2sql"
     pipeline_version: str = "0.1.0"
@@ -108,7 +109,7 @@ class Settings(BaseSettings):
 
     use_llm_verification: bool = False
     use_llm_formatting: bool = False
-    
+
     # SQL retries
     sql_max_retries: int = 2
     sql_max_verification_retries: int = 2
@@ -123,13 +124,11 @@ class Settings(BaseSettings):
     response_timeout: int = 120
 
     # Steps timeout
-    # Note: Timeouts are defined but not yet enforced in services
-    # TODO: Implement timeout enforcement using asyncio.wait_for()
     triage_timeout: float = 5.0
     intent_timeout: float = 5.0
-    sql_generation_timeout: float = 120.0  # Increased for MCP + large schemas
+    sql_generation_timeout: float = 120.0
     sql_validation_timeout: float = 10.0
-    sql_execution_timeout: float = 15.0
+    sql_execution_timeout: float = 50.0
     verification_timeout: float = 10.0
     viz_timeout: float = 15.0
     graph_timeout: float = 15.0
@@ -140,7 +139,7 @@ class Settings(BaseSettings):
     ######################################
     chart_default_width: int = 800
     chart_default_height: int = 600
-    chart_output_format: str = "html" # html|png
+    chart_output_format: str = "html"  # html|png
     chart_color_palette: list[str] = [
         "#0057A4",  # Dark Blue
         "#4A90E2",  # Light Blue
@@ -171,4 +170,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
-

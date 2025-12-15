@@ -1,19 +1,19 @@
 """Result verifier service."""
 
 import logging
-from typing import List, Dict, Any
+from typing import Any
 
-from src.config.settings import Settings
-from src.infrastructure.llm.executor import run_single_agent
-from src.infrastructure.llm.factory import (
-    is_anthropic_model,
-    azure_agent_client,
-    create_anthropic_agent,
-    get_shared_credential,
-)
 from src.config.prompts import (
     build_verification_system_prompt,
     build_verification_user_input,
+)
+from src.config.settings import Settings
+from src.infrastructure.llm.executor import run_single_agent
+from src.infrastructure.llm.factory import (
+    azure_agent_client,
+    create_anthropic_agent,
+    get_shared_credential,
+    is_anthropic_model,
 )
 from src.utils.json_parser import JSONParser
 
@@ -27,19 +27,17 @@ class ResultVerifier:
         """Initialize result verifier."""
         self.settings = settings
 
-    async def verify(
-        self, results: List[Dict[str, Any]], sql: str, question: str = ""
-    ) -> bool:
+    async def verify(self, results: list[dict[str, Any]], sql: str, question: str = "") -> bool:
         """
         Verify SQL results.
-        
+
         Uses LLM verification if `use_llm_verification=True`, otherwise uses code-based validation.
-        
+
         Args:
             results: SQL query results
             sql: SQL query that was executed
             question: Original user question (required for LLM verification)
-            
+
         Returns:
             True if results are valid, False otherwise
         """
@@ -48,7 +46,7 @@ class ResultVerifier:
         else:
             return await self._verify_with_code(results)
 
-    async def _verify_with_code(self, results: List[Dict[str, Any]]) -> bool:
+    async def _verify_with_code(self, results: list[dict[str, Any]]) -> bool:
         """Verify results using code-based validation."""
         try:
             # Basic validation
@@ -68,7 +66,7 @@ class ResultVerifier:
             return False
 
     async def _verify_with_llm(
-        self, results: List[Dict[str, Any]], sql: str, question: str
+        self, results: list[dict[str, Any]], sql: str, question: str
     ) -> bool:
         """Verify results using LLM agent."""
         try:
@@ -107,7 +105,7 @@ class ResultVerifier:
 
             # Parse response
             result = JSONParser.extract_json(response)
-            is_valid = result.get("is_valid", False)
+            is_valid = bool(result.get("is_valid", False))
 
             if not is_valid:
                 issues = result.get("issues", [])
@@ -119,4 +117,3 @@ class ResultVerifier:
             logger.error(f"LLM verification error: {e}", exc_info=True)
             # Fallback to code-based verification on error
             return await self._verify_with_code(results)
-

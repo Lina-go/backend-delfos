@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.config.settings import Settings
 from src.services.graph.tools import (
@@ -28,9 +28,9 @@ class GraphExecutor:
         self,
         run_id: str,
         chart_type: str,
-        data_points: List[Dict[str, Any]],
+        data_points: list[dict[str, Any]],
         title: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate graph HTML/PNG using local tools and upload to blob storage.
         """
@@ -63,8 +63,8 @@ class GraphExecutor:
             html_blob = f"{run_id}_{chart_type}.html"
             png_blob = f"{run_id}_{chart_type}.png"
 
-            html_url: Optional[str] = None
-            png_url: Optional[str] = None
+            html_url: str | None = None
+            png_url: str | None = None
 
             try:
                 try:
@@ -101,4 +101,3 @@ class GraphExecutor:
         except Exception as e:
             logger.error(f"Graph generation error: {e}", exc_info=True)
             raise
-

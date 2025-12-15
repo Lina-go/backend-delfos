@@ -1,11 +1,12 @@
 """FastAPI application entry point."""
 
 import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.config.settings import get_settings
 from src.api.router import router
+from src.config.settings import get_settings
 from src.infrastructure.llm.factory import close_shared_credential
 
 settings = get_settings()
@@ -42,13 +43,13 @@ app.include_router(router, prefix="/api")
 
 
 @app.on_event("startup")
-async def startup_event():
+async def startup_event() -> None:
     """Initialize application on startup."""
     logger.info("Starting Delfos NL2SQL Pipeline")
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
+async def shutdown_event() -> None:
     """Cleanup on shutdown."""
     logger.info("Shutting down Delfos NL2SQL Pipeline")
     # Close shared credential
@@ -57,4 +58,3 @@ async def shutdown_event():
         logger.info("Shared credential closed")
     except Exception as e:
         logger.error(f"Error closing shared credential: {e}", exc_info=True)
-

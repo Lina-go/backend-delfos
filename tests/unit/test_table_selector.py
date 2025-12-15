@@ -1,6 +1,7 @@
 """Tests for table selector."""
 
 import pytest
+
 from src.services.schema.table_selector import TableSelector
 
 
@@ -10,4 +11,3 @@ async def test_table_selector(settings):
     selector = TableSelector(settings)
     tables = await selector.select_tables("How many customers?")
     assert isinstance(tables, list)
-
