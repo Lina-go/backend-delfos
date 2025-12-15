@@ -12,6 +12,7 @@ from src.infrastructure.llm.factory import (
 )
 from src.infrastructure.mcp.client import MCPClient
 from src.services.sql.models import SQLExecutionResult
+from src.utils.retry import run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -54,22 +55,50 @@ class SQLExecutor:
             }
         """
         try:
-            # Step 1: Execute SQL query directly via MCP (guaranteed to run once)
-            logger.info("Executing SQL query directly via MCP (single execution)")
-            async with MCPClient(self.settings) as mcp_client:
-                execution_result = await mcp_client.execute_sql(sql)
+            # Step 1: Execute SQL query directly via MCP with retry logic
+            logger.info("Executing SQL query directly via MCP")
 
-                if execution_result.get("error"):
-                    logger.error(f"SQL execution error: {execution_result['error']}")
-                    return {
-                        "resultados": [],
-                        "total_filas": 0,
-                        "resumen": f"Error executing SQL: {execution_result['error']}",
-                        "insights": None,
-                    }
+            async def _execute_safe() -> dict[str, Any]:
+                """Execute SQL once via MCP, raising on connection timeouts."""
+                # Create a new MCP connection for each attempt to reset state
+                async with MCPClient(self.settings) as mcp_client:
+                    result = await mcp_client.execute_sql(sql)
 
-                raw_results = execution_result.get("raw", "")
-                row_count = execution_result.get("row_count", 0)
+                # If result contains a timeout error, raise exception to trigger retry
+                error_msg = str(result.get("error") or "").lower()
+                if "login timeout" in error_msg or "timeout expired" in error_msg:
+                    raise Exception(f"SQL Connection Timeout: {result['error']}")
+
+                return result
+
+            try:
+                # Execute with retries (initial_delay=2.0 allows DB to wake up if paused)
+                execution_result = await run_with_retry(
+                    _execute_safe,
+                    max_retries=3,
+                    initial_delay=2.0,
+                    backoff_factor=2.0
+                )
+            except Exception as e:
+                logger.error(f"SQL execution failed after retries: {e}")
+                return {
+                    "resultados": [],
+                    "total_filas": 0,
+                    "resumen": f"Error executing SQL (after retries): {str(e)}",
+                    "insights": None,
+                }
+
+            if execution_result.get("error"):
+                logger.error(f"SQL execution error: {execution_result['error']}")
+                return {
+                    "resultados": [],
+                    "total_filas": 0,
+                    "resumen": f"Error executing SQL: {execution_result['error']}",
+                    "insights": None,
+                }
+
+            raw_results = execution_result.get("raw", "")
+            row_count = execution_result.get("row_count", 0)
 
             logger.info(f"SQL executed successfully: {row_count} rows returned")
 
