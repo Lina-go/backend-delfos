@@ -1,0 +1,329 @@
+{
+  "metadata": {
+    "timestamp": "2025-12-16T06:48:35.067074",
+    "total_queries": 8,
+    "dataset": "queries.csv"
+  },
+  "results": [
+    {
+      "id": 0,
+      "question": "¿Cuál es el saldo total de todas las cuentas activas?",
+      "gold_archetype": "A",
+      "gold_sql": "SELECT SUM(currentBalance) AS saldo_total FROM dbo.Accounts WHERE accountStatus = 'active'",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Accounts"
+      ],
+      "gold_results": [
+        {
+          "saldo_total": 19192159.62
+        }
+      ],
+      "predicted_archetype": "A",
+      "predicted_sql": "SELECT SUM(currentBalance) AS saldo_total FROM dbo.Accounts WHERE accountStatus = 'active'",
+      "predicted_results": [
+        {
+          "saldo_total": 19192159.62
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 68,
+      "question": "¿Cuál es la tendencia de apertura de cuentas de ahorro por año?",
+      "gold_archetype": "B",
+      "gold_sql": "SELECT YEAR(createdAt) AS anio, COUNT(*) AS cuentas_ahorro FROM dbo.Accounts WHERE accountType = 'saving' GROUP BY YEAR(createdAt) ORDER BY anio",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Accounts"
+      ],
+      "gold_results": [
+        {
+          "anio": 2020,
+          "cuentas_ahorro": 5
+        },
+        {
+          "anio": 2021,
+          "cuentas_ahorro": 50
+        },
+        {
+          "anio": 2022,
+          "cuentas_ahorro": 38
+        },
+        {
+          "anio": 2023,
+          "cuentas_ahorro": 42
+        },
+        {
+          "anio": 2024,
+          "cuentas_ahorro": 41
+        },
+        {
+          "anio": 2025,
+          "cuentas_ahorro": 29
+        }
+      ],
+      "predicted_archetype": "B",
+      "predicted_sql": "SELECT YEAR(createdAt) AS año, COUNT(*) AS cantidad_cuentas_abiertas FROM dbo.Accounts WHERE accountType = 'saving' AND createdAt IS NOT NULL GROUP BY YEAR(createdAt) ORDER BY año",
+      "predicted_results": [
+        {
+          "año": 2020,
+          "cantidad_cuentas_abiertas": 5
+        },
+        {
+          "año": 2021,
+          "cantidad_cuentas_abiertas": 50
+        },
+        {
+          "año": 2022,
+          "cantidad_cuentas_abiertas": 38
+        },
+        {
+          "año": 2023,
+          "cantidad_cuentas_abiertas": 42
+        },
+        {
+          "año": 2024,
+          "cantidad_cuentas_abiertas": 41
+        },
+        {
+          "año": 2025,
+          "cantidad_cuentas_abiertas": 29
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 112,
+      "question": "¿Qué porcentaje de clientes son premium vs regulares?",
+      "gold_archetype": "C",
+      "gold_sql": "SELECT customerType, COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Customers) AS porcentaje FROM dbo.Customers GROUP BY customerType",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Customers"
+      ],
+      "gold_results": [
+        {
+          "customerType": "premium",
+          "porcentaje": 15.111111111111
+        },
+        {
+          "customerType": "regular",
+          "porcentaje": 84.888888888888
+        }
+      ],
+      "predicted_archetype": "C",
+      "predicted_sql": "SELECT customerType, COUNT(*) AS cantidad_clientes, CAST(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Customers) AS DECIMAL(5,2)) AS porcentaje FROM dbo.Customers GROUP BY customerType ORDER BY porcentaje DESC",
+      "predicted_results": [
+        {
+          "customerType": "regular",
+          "cantidad_clientes": 382,
+          "porcentaje": 84.89
+        },
+        {
+          "customerType": "premium",
+          "cantidad_clientes": 68,
+          "porcentaje": 15.11
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 159,
+      "question": "¿Qué porcentaje del total de empleados son Tellers?",
+      "gold_archetype": "D",
+      "gold_sql": "SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Employees) AS participacion_pct FROM dbo.Employees WHERE position = 'Teller'",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Employees"
+      ],
+      "gold_results": [
+        {
+          "participacion_pct": 16.0
+        }
+      ],
+      "predicted_archetype": "C",
+      "predicted_sql": "SELECT \n    COUNT(CASE WHEN position LIKE '%Teller%' THEN 1 END) AS TellerCount,\n    COUNT(*) AS TotalEmployees,\n    CAST(COUNT(CASE WHEN position LIKE '%Teller%' THEN 1 END) * 100.0 / COUNT(*) AS DECIMAL(5,2)) AS PercentageTellers\nFROM dbo.Employees",
+      "predicted_results": [
+        {
+          "TellerCount": 12,
+          "TotalEmployees": 50,
+          "PercentageTellers": 24.0
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 207,
+      "question": "¿Cómo contribuye cada estado de préstamo al monto total?",
+      "gold_archetype": "E",
+      "gold_sql": "SELECT status, SUM(loanAmount) AS monto_contribucion FROM dbo.Loans GROUP BY status",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Loans"
+      ],
+      "gold_results": [
+        {
+          "status": "active",
+          "monto_contribucion": 18527579.56
+        },
+        {
+          "status": "canceled",
+          "monto_contribucion": 1431158.93
+        },
+        {
+          "status": "closed",
+          "monto_contribucion": 11533932.13
+        }
+      ],
+      "predicted_archetype": "E",
+      "predicted_sql": "SELECT status AS Estado, COUNT(*) AS CantidadPrestamos, SUM(loanAmount) AS MontoTotal, CAST(SUM(loanAmount) * 100.0 / (SELECT SUM(loanAmount) FROM dbo.Loans) AS DECIMAL(10,2)) AS PorcentajeContribucion FROM dbo.Loans GROUP BY status ORDER BY MontoTotal DESC",
+      "predicted_results": [
+        {
+          "Estado": "active",
+          "CantidadPrestamos": 592,
+          "MontoTotal": 18527579.56,
+          "PorcentajeContribucion": 58.83
+        },
+        {
+          "Estado": "closed",
+          "CantidadPrestamos": 358,
+          "MontoTotal": 11533932.13,
+          "PorcentajeContribucion": 36.62
+        },
+        {
+          "Estado": "canceled",
+          "CantidadPrestamos": 50,
+          "MontoTotal": 1431158.93,
+          "PorcentajeContribucion": 4.54
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 253,
+      "question": "¿Cómo se compara el número de transacciones entre depósitos y retiros?",
+      "gold_archetype": "F",
+      "gold_sql": "SELECT transactionType, COUNT(*) AS num_transacciones FROM dbo.Transactions GROUP BY transactionType",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Transactions"
+      ],
+      "gold_results": [
+        {
+          "transactionType": "withdrawal",
+          "num_transacciones": 6741
+        },
+        {
+          "transactionType": "deposit",
+          "num_transacciones": 8259
+        }
+      ],
+      "predicted_archetype": "F",
+      "predicted_sql": "SELECT transactionType, COUNT(*) AS numero_transacciones FROM dbo.Transactions WHERE transactionType IN ('deposit', 'withdrawal') GROUP BY transactionType ORDER BY numero_transacciones DESC",
+      "predicted_results": [
+        {
+          "transactionType": "deposit",
+          "numero_transacciones": 8259
+        },
+        {
+          "transactionType": "withdrawal",
+          "numero_transacciones": 6741
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 302,
+      "question": "¿Cuáles son los tipos de préstamo ordenados por monto total otorgado?",
+      "gold_archetype": "G",
+      "gold_sql": "SELECT loanType, SUM(loanAmount) AS monto_total FROM dbo.Loans GROUP BY loanType ORDER BY monto_total DESC",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Loans"
+      ],
+      "gold_results": [
+        {
+          "loanType": "mortgage",
+          "monto_total": 15660930.27
+        },
+        {
+          "loanType": "auto",
+          "monto_total": 9241006.42
+        },
+        {
+          "loanType": "personal",
+          "monto_total": 6590733.93
+        }
+      ],
+      "predicted_archetype": "G",
+      "predicted_sql": "SELECT loanType, SUM(loanAmount) AS montoTotalOtorgado, COUNT(*) AS cantidadPrestamos FROM dbo.Loans GROUP BY loanType ORDER BY SUM(loanAmount) DESC",
+      "predicted_results": [
+        {
+          "loanType": "mortgage",
+          "montoTotalOtorgado": 15660930.27,
+          "cantidadPrestamos": 203
+        },
+        {
+          "loanType": "auto",
+          "montoTotalOtorgado": 9241006.42,
+          "cantidadPrestamos": 299
+        },
+        {
+          "loanType": "personal",
+          "montoTotalOtorgado": 6590733.93,
+          "cantidadPrestamos": 498
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 343,
+      "question": "¿Qué tan concentrada está la originación de préstamos en los primeros 2 tipos?",
+      "gold_archetype": "H",
+      "gold_sql": "SELECT TOP 2 loanType, COUNT(*) AS cantidad, COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Loans) AS porcentaje FROM dbo.Loans GROUP BY loanType ORDER BY cantidad DESC",
+      "gold_difficulty": "medium",
+      "gold_tables": [
+        "dbo.Loans"
+      ],
+      "gold_results": [
+        {
+          "loanType": "personal",
+          "cantidad": 498,
+          "porcentaje": 49.8
+        },
+        {
+          "loanType": "auto",
+          "cantidad": 299,
+          "porcentaje": 29.9
+        }
+      ],
+      "predicted_archetype": "H",
+      "predicted_sql": "WITH LoanTypeStats AS (\n    SELECT \n        loanType,\n        COUNT(*) AS cantidad_prestamos,\n        SUM(loanAmount) AS monto_total,\n        CAST(COUNT(*) AS FLOAT) / (SELECT COUNT(*) FROM dbo.Loans) * 100 AS porcentaje_cantidad,\n        CAST(SUM(loanAmount) AS FLOAT) / (SELECT SUM(loanAmount) FROM dbo.Loans) * 100 AS porcentaje_monto\n    FROM dbo.Loans\n    GROUP BY loanType\n),\nTop2Types AS (\n    SELECT TOP 2\n        loanType,\n        cantidad_prestamos,\n        monto_total,\n        porcentaje_cantidad,\n        porcentaje_monto\n    FROM LoanTypeStats\n    ORDER BY cantidad_prestamos DESC\n)\nSELECT \n    loanType,\n    cantidad_prestamos,\n    monto_total,\n    ROUND(porcentaje_cantidad, 2) AS porcentaje_cantidad,\n    ROUND(porcentaje_monto, 2) AS porcentaje_monto\nFROM Top2Types\nUNION ALL\nSELECT \n    'TOTAL TOP 2' AS loanType,\n    SUM(cantidad_prestamos) AS cantidad_prestamos,\n    SUM(monto_total) AS monto_total,\n    ROUND(SUM(porcentaje_cantidad), 2) AS porcentaje_cantidad,\n    ROUND(SUM(porcentaje_monto), 2) AS porcentaje_monto\nFROM Top2Types",
+      "predicted_results": [
+        {
+          "loanType": "personal",
+          "cantidad_prestamos": 498,
+          "monto_total": 6590733.93,
+          "porcentaje_cantidad": 49.8,
+          "porcentaje_monto": 20.93
+        },
+        {
+          "loanType": "auto",
+          "cantidad_prestamos": 299,
+          "monto_total": 9241006.42,
+          "porcentaje_cantidad": 29.9,
+          "porcentaje_monto": 29.34
+        },
+        {
+          "loanType": "TOTAL TOP 2",
+          "cantidad_prestamos": 797,
+          "monto_total": 15831740.35,
+          "porcentaje_cantidad": 79.7,
+          "porcentaje_monto": 50.27
+        }
+      ],
+      "error": null
+    }
+  ]
+}
