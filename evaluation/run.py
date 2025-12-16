@@ -7,6 +7,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -21,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def evaluate_query(executor: Executor, query) -> dict:
+async def evaluate_query(executor: Executor, query: Any) -> dict[str, Any]:
     """Evaluate a single query."""
     logger.info(f"[{query.id}] {query.question[:60]}...")
 
@@ -49,7 +50,7 @@ async def evaluate_query(executor: Executor, query) -> dict:
     }
 
 
-async def run_evaluation(config: EvalConfig, sample_size: int | None = None) -> dict:
+async def run_evaluation(config: EvalConfig, sample_size: int | None = None) -> dict[str, Any]:
     """Run evaluation and return results."""
     queries = load_queries_with_sql(config.data_path)
     logger.info(f"Loaded {len(queries)} queries with SQL")
@@ -58,7 +59,7 @@ async def run_evaluation(config: EvalConfig, sample_size: int | None = None) -> 
         queries = sample_queries(queries, n=sample_size)
         logger.info(f"Sampled {len(queries)} queries")
 
-    results = []
+    results: list[dict[str, Any]] = []
     async with Executor() as executor:
         for i, query in enumerate(queries):
             try:
@@ -71,19 +72,21 @@ async def run_evaluation(config: EvalConfig, sample_size: int | None = None) -> 
 
             except Exception as e:
                 logger.error(f"Error on query {query.id}: {e}")
-                results.append({
-                    "id": query.id,
-                    "question": query.question,
-                    "gold_archetype": query.archetype,
-                    "gold_sql": query.sql,
-                    "gold_difficulty": query.difficulty,
-                    "gold_tables": query.gold_tables,
-                    "gold_results": None,
-                    "predicted_archetype": None,
-                    "predicted_sql": None,
-                    "predicted_results": None,
-                    "error": str(e),
-                })
+                results.append(
+                    {
+                        "id": query.id,
+                        "question": query.question,
+                        "gold_archetype": query.archetype,
+                        "gold_sql": query.sql,
+                        "gold_difficulty": query.difficulty,
+                        "gold_tables": query.gold_tables,
+                        "gold_results": None,
+                        "predicted_archetype": None,
+                        "predicted_sql": None,
+                        "predicted_results": None,
+                        "error": str(e),
+                    }
+                )
 
     return {
         "metadata": {

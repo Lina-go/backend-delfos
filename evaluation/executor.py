@@ -8,7 +8,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config.settings import get_settings
-from src.infrastructure.mcp.client import MCPClient
+from src.infrastructure.llm.factory import close_shared_credential
 from src.orchestrator.pipeline import PipelineOrchestrator
 from src.services.sql.executor import SQLExecutor
 
@@ -33,6 +33,11 @@ class Executor:
             await self._orchestrator.close()
         if self._sql_executor:
             await self._sql_executor.close()
+        # Ensure shared Azure credential (and its underlying HTTP session) is closed
+        try:
+            await close_shared_credential()
+        except Exception as e:
+            logger.error(f"Error closing shared credential: {e}", exc_info=True)
 
     async def run_pipeline(self, question: str) -> dict[str, Any]:
         """Run pipeline and return predictions."""

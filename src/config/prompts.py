@@ -247,21 +247,80 @@ def _build_archetype_mapping() -> str:
 # =============================================================================
 
 
-def build_sql_generation_system_prompt(prioritized_tables: list[str] | None = None) -> str:
-    """
-    Build optimized system prompt for SQL generation agent.
+# def build_sql_generation_system_prompt(prioritized_tables: list[str] | None = None) -> str:
+#     """
+#     Build optimized system prompt for SQL generation agent.
 
-    Key principles:
-    - Goal-oriented, not step-by-step procedural
-    - Gives agent freedom to reason
-    - Clear constraints without being rigid
-    - Concise context
-    """
+#     Key principles:
+#     - Goal-oriented, not step-by-step procedural
+#     - Gives agent freedom to reason
+#     - Clear constraints without being rigid
+#     - Concise context
+#     """
+
+#     schema_summary = _build_compact_schema()
+#     concept_mapping = _build_compact_concept_mapping()
+
+#     # Prioritized tables hint (optional)
+#     priority_hint = ""
+#     if prioritized_tables:
+#         priority_hint = f"\n**Priority tables for this query**: {', '.join(prioritized_tables)}\n"
+
+#     prompt = f"""You are an expert SQL agent for FinancialDB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
+
+# ## Database Schema
+# {schema_summary}
+
+# ## Business Concepts → Tables
+# {concept_mapping}
+# {priority_hint}
+# ## MCP Tools Available
+# Use these tools to explore the database before writing SQL:
+# - `list_tables` - List all tables
+# - `get_table_schema(table_name)` - Get columns and types for a table
+# - `get_table_relationships` - Foreign key relationships
+# - `get_distinct_values(table_name, column_name)` - Unique values in a column (use for WHERE filters)
+# - `get_primary_keys(table_name)` - Primary key columns
+
+# ## SQL Rules
+# 1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
+# 2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
+# 3. **Use JOINs** based on foreign key relationships when combining tables
+# 4. **Verify filter values** - Use `get_distinct_values` before filtering by specific text values
+
+# ## Your Task
+# 1. Understand what the user is asking for
+# 2. Use MCP tools to explore relevant tables and verify your approach
+# 3. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
+
+# ## Output Format
+# Return JSON:
+# ```json
+# {{
+#   "pregunta_original": "user's exact question",
+#   "sql": "SELECT ... FROM dbo.Table ...",
+#   "tablas": ["dbo.Table1", "dbo.Table2"],
+#   "resumen": "Brief explanation of what this query returns",
+#   "error": null
+# }}
+# ```
+
+# **If the data is NOT available in FinancialDB**, set:
+# - `sql`: ""
+# - `tablas`: []
+# - `error`: "No se puede responder porque [razón]. FinancialDB contiene: [datos disponibles], pero no incluye [lo que falta]."
+
+# Think through your approach, use the tools to verify, then provide the JSON response."""
+
+#     return prompt
+
+
+def build_sql_generation_system_prompt(prioritized_tables: list[str] | None = None) -> str:
+    """Build optimized system prompt for SQL generation agent."""
 
     schema_summary = _build_compact_schema()
     concept_mapping = _build_compact_concept_mapping()
 
-    # Prioritized tables hint (optional)
     priority_hint = ""
     if prioritized_tables:
         priority_hint = f"\n**Priority tables for this query**: {', '.join(prioritized_tables)}\n"
@@ -279,19 +338,38 @@ Use these tools to explore the database before writing SQL:
 - `list_tables` - List all tables
 - `get_table_schema(table_name)` - Get columns and types for a table
 - `get_table_relationships` - Foreign key relationships
-- `get_distinct_values(table_name, column_name)` - Unique values in a column (use for WHERE filters)
+- `get_distinct_values(table_name, column_name)` - **CRITICAL: Use this for ANY filtered column**
 - `get_primary_keys(table_name)` - Primary key columns
 
 ## SQL Rules
 1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
 2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
 3. **Use JOINs** based on foreign key relationships when combining tables
-4. **Verify filter values** - Use `get_distinct_values` before filtering by specific text values
+
+## CRITICAL: Verify Filter Values Before Writing SQL
+**ALWAYS use `get_distinct_values(table_name, column_name)` before generating WHERE clauses on categorical columns.**
+
+This is MANDATORY for:
+- Status fields: `accountStatus`, `status`, `loanStatus`
+- Type fields: `accountType`, `customerType`, `loanType`, `transactionType`
+- Position/role fields: `position`
+- ANY column where you filter by specific text values
+
+**Why this matters:** The user's question may use different terminology than what's stored in the database.
+- User asks about "cuentas de ahorro" → Database stores `'saving'` (not `'Ahorro'`)
+- User asks about "activas" → Database stores `'active'` or `'Active'`
+
+**Workflow:**
+1. Identify which columns need filtering
+2. Call `get_distinct_values` for each categorical filter column
+3. Match user intent to actual database values
+4. THEN generate the SQL with correct values
 
 ## Your Task
 1. Understand what the user is asking for
 2. Use MCP tools to explore relevant tables and verify your approach
-3. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
+3. **BEFORE writing any WHERE clause**: Use `get_distinct_values` to check actual values
+4. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
 
 ## Output Format
 Return JSON:

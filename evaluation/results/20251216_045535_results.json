@@ -1,0 +1,204 @@
+{
+  "metadata": {
+    "timestamp": "2025-12-16T05:06:05.533412",
+    "total_queries": 5,
+    "dataset": "queries.csv"
+  },
+  "results": [
+    {
+      "id": 0,
+      "question": "¿Cuál es el saldo total de todas las cuentas activas?",
+      "gold_archetype": "A",
+      "gold_sql": "SELECT SUM(currentBalance) AS saldo_total FROM dbo.Accounts WHERE accountStatus = 'active'",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Accounts"
+      ],
+      "gold_results": [
+        {
+          "saldo_total": 19192159.62
+        }
+      ],
+      "predicted_archetype": "A",
+      "predicted_sql": "SELECT SUM(currentBalance) AS saldo_total FROM dbo.Accounts WHERE accountStatus = 'active'",
+      "predicted_results": [
+        {
+          "saldo_total": 19192159.62
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 68,
+      "question": "¿Cuál es la tendencia de apertura de cuentas de ahorro por año?",
+      "gold_archetype": "B",
+      "gold_sql": "SELECT YEAR(createdAt) AS anio, COUNT(*) AS cuentas_ahorro FROM dbo.Accounts WHERE accountType = 'saving' GROUP BY YEAR(createdAt) ORDER BY anio",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Accounts"
+      ],
+      "gold_results": [
+        {
+          "anio": 2020,
+          "cuentas_ahorro": 5
+        },
+        {
+          "anio": 2021,
+          "cuentas_ahorro": 50
+        },
+        {
+          "anio": 2022,
+          "cuentas_ahorro": 38
+        },
+        {
+          "anio": 2023,
+          "cuentas_ahorro": 42
+        },
+        {
+          "anio": 2024,
+          "cuentas_ahorro": 41
+        },
+        {
+          "anio": 2025,
+          "cuentas_ahorro": 29
+        }
+      ],
+      "predicted_archetype": "B",
+      "predicted_sql": "SELECT YEAR(createdAt) AS Año, COUNT(*) AS CantidadCuentasAbiertas FROM dbo.Accounts WHERE accountType IN ('saving', 'savings', 'Ahorro') AND createdAt IS NOT NULL GROUP BY YEAR(createdAt) ORDER BY Año",
+      "predicted_results": [
+        {
+          "Año": 2020,
+          "CantidadCuentasAbiertas": 5
+        },
+        {
+          "Año": 2021,
+          "CantidadCuentasAbiertas": 50
+        },
+        {
+          "Año": 2022,
+          "CantidadCuentasAbiertas": 38
+        },
+        {
+          "Año": 2023,
+          "CantidadCuentasAbiertas": 42
+        },
+        {
+          "Año": 2024,
+          "CantidadCuentasAbiertas": 41
+        },
+        {
+          "Año": 2025,
+          "CantidadCuentasAbiertas": 29
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 112,
+      "question": "¿Qué porcentaje de clientes son premium vs regulares?",
+      "gold_archetype": "C",
+      "gold_sql": "SELECT customerType, COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Customers) AS porcentaje FROM dbo.Customers GROUP BY customerType",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Customers"
+      ],
+      "gold_results": [
+        {
+          "customerType": "premium",
+          "porcentaje": 15.111111111111
+        },
+        {
+          "customerType": "regular",
+          "porcentaje": 84.888888888888
+        }
+      ],
+      "predicted_archetype": "C",
+      "predicted_sql": "SELECT customerType, COUNT(*) AS cantidad_clientes, CAST(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Customers) AS DECIMAL(5,2)) AS porcentaje FROM dbo.Customers GROUP BY customerType ORDER BY porcentaje DESC",
+      "predicted_results": [
+        {
+          "customerType": "regular",
+          "cantidad_clientes": 382,
+          "porcentaje": 84.89
+        },
+        {
+          "customerType": "premium",
+          "cantidad_clientes": 68,
+          "porcentaje": 15.11
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 159,
+      "question": "¿Qué porcentaje del total de empleados son Tellers?",
+      "gold_archetype": "D",
+      "gold_sql": "SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dbo.Employees) AS participacion_pct FROM dbo.Employees WHERE position = 'Teller'",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Employees"
+      ],
+      "gold_results": [
+        {
+          "participacion_pct": 16.0
+        }
+      ],
+      "predicted_archetype": "C",
+      "predicted_sql": "SELECT \n    COUNT(CASE WHEN position = 'Teller' THEN 1 END) AS TellerCount,\n    COUNT(*) AS TotalEmployees,\n    CAST(COUNT(CASE WHEN position = 'Teller' THEN 1 END) * 100.0 / COUNT(*) AS DECIMAL(5,2)) AS PercentageTellers\nFROM dbo.Employees",
+      "predicted_results": [
+        {
+          "TellerCount": 8,
+          "TotalEmployees": 50,
+          "PercentageTellers": 16.0
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": 207,
+      "question": "¿Cómo contribuye cada estado de préstamo al monto total?",
+      "gold_archetype": "E",
+      "gold_sql": "SELECT status, SUM(loanAmount) AS monto_contribucion FROM dbo.Loans GROUP BY status",
+      "gold_difficulty": "easy",
+      "gold_tables": [
+        "dbo.Loans"
+      ],
+      "gold_results": [
+        {
+          "status": "active",
+          "monto_contribucion": 18527579.56
+        },
+        {
+          "status": "canceled",
+          "monto_contribucion": 1431158.93
+        },
+        {
+          "status": "closed",
+          "monto_contribucion": 11533932.13
+        }
+      ],
+      "predicted_archetype": "E",
+      "predicted_sql": "SELECT status AS Estado, COUNT(*) AS CantidadPrestamos, SUM(loanAmount) AS MontoTotal, CAST(SUM(loanAmount) * 100.0 / (SELECT SUM(loanAmount) FROM dbo.Loans) AS DECIMAL(10,2)) AS PorcentajeContribucion FROM dbo.Loans GROUP BY status ORDER BY MontoTotal DESC",
+      "predicted_results": [
+        {
+          "Estado": "active",
+          "CantidadPrestamos": 592,
+          "MontoTotal": 18527579.56,
+          "PorcentajeContribucion": 58.83
+        },
+        {
+          "Estado": "closed",
+          "CantidadPrestamos": 358,
+          "MontoTotal": 11533932.13,
+          "PorcentajeContribucion": 36.62
+        },
+        {
+          "Estado": "canceled",
+          "CantidadPrestamos": 50,
+          "MontoTotal": 1431158.93,
+          "PorcentajeContribucion": 4.54
+        }
+      ],
+      "error": null
+    }
+  ]
+}
