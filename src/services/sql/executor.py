@@ -74,10 +74,7 @@ class SQLExecutor:
             try:
                 # Execute with retries (initial_delay=2.0 allows DB to wake up if paused)
                 execution_result = await run_with_retry(
-                    _execute_safe,
-                    max_retries=3,
-                    initial_delay=2.0,
-                    backoff_factor=2.0
+                    _execute_safe, max_retries=3, initial_delay=2.0, backoff_factor=2.0
                 )
             except Exception as e:
                 logger.error(f"SQL execution failed after retries: {e}")

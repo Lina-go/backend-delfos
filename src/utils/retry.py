@@ -51,7 +51,7 @@ async def run_with_retry(
                 or "rate_limit" in error_str
                 or "rate limit is exceeded" in error_str
             )
-            
+
             # Check for connection or timeout errors
             is_connection_error = (
                 "login timeout" in error_str
