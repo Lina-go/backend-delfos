@@ -1,8 +1,8 @@
 """Request/Response models for API endpoints."""
 
-from typing import Any
-
+from typing import Any, Optional
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 
 class ChatRequest(BaseModel):
@@ -40,3 +40,34 @@ class SchemaResponse(BaseModel):
     """Response model for schema endpoint."""
 
     tables: list[dict[str, Any]] = Field(..., description="List of tables with schema information")
+
+class ProjectItem(BaseModel):
+    """Item stored in a project."""
+    id: str
+    type: str
+    content: str
+    title: Optional[str] = None
+    created_at: Optional[datetime] = None
+    metadata: Optional[dict[str, Any]] = {}
+
+class Project(BaseModel):
+    """Project definition."""
+    id: str
+    title: str
+    description: Optional[str] = None
+    owner: Optional[str] = None
+    created_at: Optional[datetime] = None
+    items: list[ProjectItem] = []
+
+class CreateProjectRequest(BaseModel):
+    """Request to create a new project."""
+    title: str
+    description: Optional[str] = ""
+    owner: str = "Andres Leon"
+
+class AddProjectItemRequest(BaseModel):
+    """Request to add an item to a project."""
+    type: str
+    content: str
+    title: Optional[str] = "Nueva Gráfica"
+    metadata: Optional[dict[str, Any]] = {}

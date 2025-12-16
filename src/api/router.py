@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -9,15 +10,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_settings_dependency
-from src.api.models import ChatRequest, ChatResponse, HealthResponse
+from src.api.models import ChatRequest, ChatResponse, HealthResponse, Project, CreateProjectRequest, AddProjectItemRequest
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
+from src.infrastructure.mcp.client import MCPClient
 from src.orchestrator.pipeline import PipelineOrchestrator
+from src.services.sql.executor import SQLExecutor
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ==========================================
+#  CHAT ENDPOINT
+# ==========================================
 
 @router.post("/chat", response_model=ChatResponse, tags=["chat"])
 async def chat(
@@ -130,6 +136,10 @@ async def health() -> HealthResponse:
     return HealthResponse(status="healthy", version="0.1.0")
 
 
+# ==========================================
+#  CACHE MANAGEMENT ENDPOINTS
+# ==========================================
+
 @router.get("/cache/stats", tags=["cache"])
 async def get_cache_stats() -> dict[str, Any]:
     """
@@ -160,3 +170,101 @@ async def clear_cache() -> dict[str, str]:
     SemanticCache.clear()
     logger.info("Cache cleared by API request")
     return {"message": "Cache cleared successfully", "status": "success"}
+
+# ==========================================
+#  PROJECT MANAGEMENT ENDPOINTS
+# ==========================================
+
+@router.get("/projects", response_model=list[Project], tags=["projects"])
+async def get_projects(
+    settings: Settings = Depends(get_settings_dependency)
+) -> list[Project]:
+    """
+    Get all projects. 
+    Uses SQLExecutor to retrieve and automatically format the list from the DB.
+    """
+    executor = SQLExecutor(settings)
+    
+    # Simple Query. The Executor will format the result into JSON for us.
+    sql = "SELECT id, title, description, owner, createdAt as created_at FROM dbo.Projects ORDER BY createdAt DESC"
+    
+    try:
+        # 1. Execute and get structured JSON
+        result = await executor.execute(sql)
+        projects_data = result.get("resultados", [])
+        
+        # 2. Convert to Pydantic Models
+        projects = []
+        for p in projects_data:
+            projects.append(Project(
+                id=str(p.get("id")),
+                title=p.get("title"),
+                description=p.get("description"),
+                owner=p.get("owner"),
+                created_at=p.get("created_at"), 
+                items=[] # Items loaded separately or lazily if needed
+            ))
+        return projects
+    except Exception as e:
+        logger.error(f"Error fetching projects: {e}")
+        return []
+
+@router.post("/projects", response_model=Project, tags=["projects"])
+async def create_project(
+    request: CreateProjectRequest,
+    settings: Settings = Depends(get_settings_dependency)
+) -> Project:
+    """
+    Create a new project using direct SQL insertion (FAST, No LLM).
+    """
+    new_id = str(uuid.uuid4())
+    
+    # 1. Prepare SQL
+    sql = f"""
+    INSERT INTO dbo.Projects (id, title, description, owner, createdAt)
+    VALUES ('{new_id}', '{request.title}', '{request.description}', '{request.owner}', GETDATE())
+    """
+    
+    # 2. Execute Directly
+    async with MCPClient(settings) as client:
+        result = await client.execute_sql(sql)
+        if result.get("error"):
+            raise HTTPException(status_code=500, detail=f"Database error: {result['error']}")
+
+    # 3. Return the object so frontend can update immediately
+    return Project(
+        id=new_id,
+        title=request.title,
+        description=request.description,
+        owner=request.owner,
+        items=[]
+    )
+
+@router.post("/projects/{project_id}/items", tags=["projects"])
+async def add_project_item(
+    project_id: str,
+    request: AddProjectItemRequest,
+    settings: Settings = Depends(get_settings_dependency)
+) -> dict[str, str]:
+    """
+    Add a graph (URL) to a project using direct SQL insertion (FAST, No LLM).
+    """
+    item_id = str(uuid.uuid4())
+    
+    # Escape quotes to prevent SQL errors
+    safe_content = request.content.replace("'", "''") 
+    safe_title = request.title.replace("'", "''") if request.title else "Untitled"
+    
+    # 1. Prepare SQL
+    sql = f"""
+    INSERT INTO dbo.ProjectItems (id, projectId, type, content, title, createdAt)
+    VALUES ('{item_id}', '{project_id}', '{request.type}', '{safe_content}', '{safe_title}', GETDATE())
+    """
+    
+    # 2. Execute Directly
+    async with MCPClient(settings) as client:
+        result = await client.execute_sql(sql)
+        if result.get("error"):
+            raise HTTPException(status_code=500, detail=f"Database error: {result['error']}")
+            
+    return {"status": "success", "id": item_id}
