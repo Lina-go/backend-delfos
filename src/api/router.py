@@ -10,7 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_settings_dependency
-from src.api.models import ChatRequest, ChatResponse, HealthResponse, Project, CreateProjectRequest, AddProjectItemRequest, ProjectItem
+from src.api.models import (
+    AddProjectItemRequest,
+    ChatRequest,
+    ChatResponse,
+    CreateProjectRequest,
+    HealthResponse,
+    Project,
+)
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
 from src.infrastructure.database.connection import execute_insert, execute_query
@@ -23,6 +30,7 @@ router = APIRouter()
 # ==========================================
 #  CHAT ENDPOINT
 # ==========================================
+
 
 @router.post("/chat", response_model=ChatResponse, tags=["chat"])
 async def chat(
@@ -139,6 +147,7 @@ async def health() -> HealthResponse:
 #  CACHE MANAGEMENT ENDPOINTS
 # ==========================================
 
+
 @router.get("/cache/stats", tags=["cache"])
 async def get_cache_stats() -> dict[str, Any]:
     """
@@ -170,59 +179,60 @@ async def clear_cache() -> dict[str, str]:
     logger.info("Cache cleared by API request")
     return {"message": "Cache cleared successfully", "status": "success"}
 
+
 # ==========================================
 #  PROJECT MANAGEMENT ENDPOINTS
 # ==========================================
 
+
 @router.get("/projects", response_model=list[Project], tags=["projects"])
-async def get_projects(
-    settings: Settings = Depends(get_settings_dependency)
-) -> list[Project]:
+async def get_projects(settings: Settings = Depends(get_settings_dependency)) -> list[Project]:
     """
-    Get all projects. 
+    Get all projects.
     Uses direct database connection to retrieve the list from the DB.
     """
     sql = "SELECT id, title, description, owner, createdAt as created_at FROM dbo.Projects ORDER BY createdAt DESC"
-    
+
     try:
         projects_data = await execute_query(settings, sql)
-        
+
         projects = []
         for p in projects_data:
-            projects.append(Project(
-                id=str(p.get("id")),
-                title=p.get("title"),
-                description=p.get("description"),
-                owner=p.get("owner"),
-                created_at=p.get("created_at"), 
-                items=[]
-            ))
+            projects.append(
+                Project(
+                    id=str(p.get("id", "")),
+                    title=str(p.get("title", "")),
+                    description=p.get("description"),
+                    owner=p.get("owner"),
+                    created_at=p.get("created_at"),
+                    items=[],
+                )
+            )
         return projects
     except Exception as e:
         logger.error(f"Error fetching projects: {e}")
         return []
 
+
 @router.post("/projects", response_model=Project, tags=["projects"])
 async def create_project(
-    request: CreateProjectRequest,
-    settings: Settings = Depends(get_settings_dependency)
+    request: CreateProjectRequest, settings: Settings = Depends(get_settings_dependency)
 ) -> Project:
     """
     Create a new project using direct SQL insertion (FAST, No LLM).
     """
     new_id = str(uuid.uuid4())
-    
+
     sql = """
     INSERT INTO dbo.Projects (id, title, description, owner, createdAt)
     VALUES (?, ?, ?, ?, GETDATE())
     """
     params = (new_id, request.title, request.description, request.owner)
-    
+
     result = await execute_insert(settings, sql, params)
     if not result.get("success") or result.get("error"):
         raise HTTPException(
-            status_code=500, 
-            detail=f"Database error: {result.get('error', 'Unknown error')}"
+            status_code=500, detail=f"Database error: {result.get('error', 'Unknown error')}"
         )
 
     return Project(
@@ -230,58 +240,58 @@ async def create_project(
         title=request.title,
         description=request.description,
         owner=request.owner,
-        items=[]
+        items=[],
     )
+
 
 @router.post("/projects/{project_id}/items", tags=["projects"])
 async def add_project_item(
     project_id: str,
     request: AddProjectItemRequest,
-    settings: Settings = Depends(get_settings_dependency)
+    settings: Settings = Depends(get_settings_dependency),
 ) -> dict[str, str]:
     """
     Add a graph (URL) to a project using direct SQL insertion (FAST, No LLM).
     The title will always be the user's question (user_question field).
     """
     item_id = str(uuid.uuid4())
-    
+
     MAX_TITLE_LENGTH = 200
-    
+
     if request.user_question:
         title_to_use = request.user_question.strip()
     elif request.title:
         title_to_use = request.title.strip()
     else:
         title_to_use = "Nueva Gráfica"
-    
+
     # Truncate title if necessary to fit DB column
     if len(title_to_use) > MAX_TITLE_LENGTH:
-        safe_title = title_to_use[:MAX_TITLE_LENGTH - 3] + "..."
+        safe_title = title_to_use[: MAX_TITLE_LENGTH - 3] + "..."
         logger.warning(f"Title truncated from {len(title_to_use)} to {MAX_TITLE_LENGTH} characters")
     else:
         safe_title = title_to_use
-    
+
     # Use parameterized query to prevent SQL injection
     sql = """
     INSERT INTO dbo.ProjectItems (id, projectId, type, content, title, createdAt)
     VALUES (?, ?, ?, ?, ?, GETDATE())
     """
     params = (item_id, project_id, request.type, request.content, safe_title)
-    
+
     # Execute directly via database connection
     result = await execute_insert(settings, sql, params)
     if not result.get("success") or result.get("error"):
         raise HTTPException(
-            status_code=500, 
-            detail=f"Database error: {result.get('error', 'Unknown error')}"
+            status_code=500, detail=f"Database error: {result.get('error', 'Unknown error')}"
         )
-            
+
     return {"status": "success", "id": item_id}
+
 
 @router.get("/projects/{project_id}/items", tags=["projects"])
 async def get_project_items(
-    project_id: str,
-    settings: Settings = Depends(get_settings_dependency)
+    project_id: str, settings: Settings = Depends(get_settings_dependency)
 ) -> list[dict[str, Any]]:
     """
     Get all items (graphs) for a specific project.
@@ -298,14 +308,16 @@ async def get_project_items(
 
         items = []
         for item in items_data:
-            items.append({
-                "id": str(item.get("id")),
-                "project_id": str(item.get("projectId")),
-                "type": item.get("type"),
-                "content": item.get("content"),
-                "title": item.get("title"),
-                "created_at": item.get("created_at")
-            })
+            items.append(
+                {
+                    "id": str(item.get("id")),
+                    "project_id": str(item.get("projectId")),
+                    "type": item.get("type"),
+                    "content": item.get("content"),
+                    "title": item.get("title"),
+                    "created_at": item.get("created_at"),
+                }
+            )
         return items
     except Exception as e:
         logger.error(f"Error fetching project items: {e}")

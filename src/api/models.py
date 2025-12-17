@@ -1,8 +1,9 @@
 """Request/Response models for API endpoints."""
 
-from typing import Any, Optional
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -41,34 +42,42 @@ class SchemaResponse(BaseModel):
 
     tables: list[dict[str, Any]] = Field(..., description="List of tables with schema information")
 
+
 class ProjectItem(BaseModel):
     """Item stored in a project."""
+
     id: str
     type: str
     content: str
-    title: Optional[str] = None
-    created_at: Optional[datetime] = None
-    metadata: Optional[dict[str, Any]] = {}
+    title: str | None = None
+    created_at: datetime | None = None
+    metadata: dict[str, Any] | None = {}
+
 
 class Project(BaseModel):
     """Project definition."""
+
     id: str
     title: str
-    description: Optional[str] = None
-    owner: Optional[str] = None
-    created_at: Optional[datetime] = None
+    description: str | None = None
+    owner: str | None = None
+    created_at: datetime | None = None
     items: list[ProjectItem] = []
+
 
 class CreateProjectRequest(BaseModel):
     """Request to create a new project."""
+
     title: str
-    description: Optional[str] = ""
+    description: str | None = ""
     owner: str = "Andres Leon"
+
 
 class AddProjectItemRequest(BaseModel):
     """Request to add an item to a project."""
+
     type: str
     content: str
-    user_question: Optional[str] = Field(None, description="User's original question (used as title)")
-    title: Optional[str] = None  # Fallback if user_question is not provided
-    metadata: Optional[dict[str, Any]] = {}
+    user_question: str | None = Field(None, description="User's original question (used as title)")
+    title: str | None = None  # Fallback if user_question is not provided
+    metadata: dict[str, Any] | None = {}

@@ -46,7 +46,7 @@ dev = [
 line-length = 100
 target-version = "py311"
 lint.select = ["E", "F", "B", "I", "UP", "SIM"]
-lint.ignore = ["E501"]
+lint.ignore = ["E501", "B008"]
 
 [tool.ruff.format]
 quote-style = "double"

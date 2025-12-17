@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 import pyodbc
 
 from src.config.settings import Settings
+from src.utils.retry import is_pyodbc_timeout_error, run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,20 @@ async def execute_query(
             if conn:
                 conn.close()
 
-    # Execute in thread pool to avoid blocking
-    return await asyncio.to_thread(_execute)
+    # Execute in thread pool with retry logic for HYT00 timeout errors
+    async def _execute_with_retry() -> list[dict[str, Any]]:
+        return await asyncio.to_thread(_execute)
+
+    return cast(
+        list[dict[str, Any]],
+        await run_with_retry(
+            _execute_with_retry,
+            max_retries=5,
+            initial_delay=2.0,
+            backoff_factor=1.5,
+            retry_on_rate_limit=True,
+        ),
+    )
 
 
 async def execute_insert(
@@ -120,6 +133,9 @@ async def execute_insert(
             logger.error(f"Database insert/update error: {e}")
             if conn:
                 conn.rollback()
+            # Re-raise retryable errors (like HYT00) so retry logic can handle them
+            if is_pyodbc_timeout_error(e):
+                raise
             return {
                 "success": False,
                 "rows_affected": 0,
@@ -131,6 +147,17 @@ async def execute_insert(
             if conn:
                 conn.close()
 
-    # Execute in thread pool to avoid blocking
-    return await asyncio.to_thread(_execute)
+    # Execute in thread pool with retry logic for HYT00 timeout errors
+    async def _execute_with_retry() -> dict[str, Any]:
+        return await asyncio.to_thread(_execute)
 
+    return cast(
+        dict[str, Any],
+        await run_with_retry(
+            _execute_with_retry,
+            max_retries=5,
+            initial_delay=2.0,
+            backoff_factor=1.5,
+            retry_on_rate_limit=True,
+        ),
+    )

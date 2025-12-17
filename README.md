@@ -70,5 +70,8 @@ Format code:
 ```bash
 black src/
 ruff check src/
+uv run ruff check .
+uv run python -m mypy src                                                             
+uv run ruff format .    
 ```
 
