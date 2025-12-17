@@ -164,6 +164,7 @@ class Settings(BaseSettings):
     ######################################
     database_name: str = "FinancialDB"
     database_schema: str = "dbo"
+    database_connection_string: str = ""
 
 
 @lru_cache

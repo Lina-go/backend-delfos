@@ -69,5 +69,6 @@ class AddProjectItemRequest(BaseModel):
     """Request to add an item to a project."""
     type: str
     content: str
-    title: Optional[str] = "Nueva Gráfica"
+    user_question: Optional[str] = Field(None, description="User's original question (used as title)")
+    title: Optional[str] = None  # Fallback if user_question is not provided
     metadata: Optional[dict[str, Any]] = {}

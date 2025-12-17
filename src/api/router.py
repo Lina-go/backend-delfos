@@ -10,12 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_settings_dependency
-from src.api.models import ChatRequest, ChatResponse, HealthResponse, Project, CreateProjectRequest, AddProjectItemRequest
+from src.api.models import ChatRequest, ChatResponse, HealthResponse, Project, CreateProjectRequest, AddProjectItemRequest, ProjectItem
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
-from src.infrastructure.mcp.client import MCPClient
+from src.infrastructure.database.connection import execute_insert, execute_query
 from src.orchestrator.pipeline import PipelineOrchestrator
-from src.services.sql.executor import SQLExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -181,19 +180,13 @@ async def get_projects(
 ) -> list[Project]:
     """
     Get all projects. 
-    Uses SQLExecutor to retrieve and automatically format the list from the DB.
+    Uses direct database connection to retrieve the list from the DB.
     """
-    executor = SQLExecutor(settings)
-    
-    # Simple Query. The Executor will format the result into JSON for us.
     sql = "SELECT id, title, description, owner, createdAt as created_at FROM dbo.Projects ORDER BY createdAt DESC"
     
     try:
-        # 1. Execute and get structured JSON
-        result = await executor.execute(sql)
-        projects_data = result.get("resultados", [])
+        projects_data = await execute_query(settings, sql)
         
-        # 2. Convert to Pydantic Models
         projects = []
         for p in projects_data:
             projects.append(Project(
@@ -202,7 +195,7 @@ async def get_projects(
                 description=p.get("description"),
                 owner=p.get("owner"),
                 created_at=p.get("created_at"), 
-                items=[] # Items loaded separately or lazily if needed
+                items=[]
             ))
         return projects
     except Exception as e:
@@ -219,19 +212,19 @@ async def create_project(
     """
     new_id = str(uuid.uuid4())
     
-    # 1. Prepare SQL
-    sql = f"""
+    sql = """
     INSERT INTO dbo.Projects (id, title, description, owner, createdAt)
-    VALUES ('{new_id}', '{request.title}', '{request.description}', '{request.owner}', GETDATE())
+    VALUES (?, ?, ?, ?, GETDATE())
     """
+    params = (new_id, request.title, request.description, request.owner)
     
-    # 2. Execute Directly
-    async with MCPClient(settings) as client:
-        result = await client.execute_sql(sql)
-        if result.get("error"):
-            raise HTTPException(status_code=500, detail=f"Database error: {result['error']}")
+    result = await execute_insert(settings, sql, params)
+    if not result.get("success") or result.get("error"):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Database error: {result.get('error', 'Unknown error')}"
+        )
 
-    # 3. Return the object so frontend can update immediately
     return Project(
         id=new_id,
         title=request.title,
@@ -248,23 +241,72 @@ async def add_project_item(
 ) -> dict[str, str]:
     """
     Add a graph (URL) to a project using direct SQL insertion (FAST, No LLM).
+    The title will always be the user's question (user_question field).
     """
     item_id = str(uuid.uuid4())
     
-    # Escape quotes to prevent SQL errors
-    safe_content = request.content.replace("'", "''") 
-    safe_title = request.title.replace("'", "''") if request.title else "Untitled"
+    MAX_TITLE_LENGTH = 200
     
-    # 1. Prepare SQL
-    sql = f"""
+    if request.user_question:
+        title_to_use = request.user_question.strip()
+    elif request.title:
+        title_to_use = request.title.strip()
+    else:
+        title_to_use = "Nueva Gráfica"
+    
+    # Truncate title if necessary to fit DB column
+    if len(title_to_use) > MAX_TITLE_LENGTH:
+        safe_title = title_to_use[:MAX_TITLE_LENGTH - 3] + "..."
+        logger.warning(f"Title truncated from {len(title_to_use)} to {MAX_TITLE_LENGTH} characters")
+    else:
+        safe_title = title_to_use
+    
+    # Use parameterized query to prevent SQL injection
+    sql = """
     INSERT INTO dbo.ProjectItems (id, projectId, type, content, title, createdAt)
-    VALUES ('{item_id}', '{project_id}', '{request.type}', '{safe_content}', '{safe_title}', GETDATE())
+    VALUES (?, ?, ?, ?, ?, GETDATE())
     """
+    params = (item_id, project_id, request.type, request.content, safe_title)
     
-    # 2. Execute Directly
-    async with MCPClient(settings) as client:
-        result = await client.execute_sql(sql)
-        if result.get("error"):
-            raise HTTPException(status_code=500, detail=f"Database error: {result['error']}")
+    # Execute directly via database connection
+    result = await execute_insert(settings, sql, params)
+    if not result.get("success") or result.get("error"):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Database error: {result.get('error', 'Unknown error')}"
+        )
             
     return {"status": "success", "id": item_id}
+
+@router.get("/projects/{project_id}/items", tags=["projects"])
+async def get_project_items(
+    project_id: str,
+    settings: Settings = Depends(get_settings_dependency)
+) -> list[dict[str, Any]]:
+    """
+    Get all items (graphs) for a specific project.
+    """
+    sql = """
+    SELECT id, projectId, type, content, title, createdAt as created_at
+    FROM dbo.ProjectItems
+    WHERE projectId = ?
+    ORDER BY createdAt DESC
+    """
+
+    try:
+        items_data = await execute_query(settings, sql, (project_id,))
+
+        items = []
+        for item in items_data:
+            items.append({
+                "id": str(item.get("id")),
+                "project_id": str(item.get("projectId")),
+                "type": item.get("type"),
+                "content": item.get("content"),
+                "title": item.get("title"),
+                "created_at": item.get("created_at")
+            })
+        return items
+    except Exception as e:
+        logger.error(f"Error fetching project items: {e}")
+        return []
