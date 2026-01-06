@@ -27,7 +27,14 @@ def get_shared_credential() -> DefaultAzureCredential:
     """
     global _shared_credential
     if _shared_credential is None:
-        _shared_credential = DefaultAzureCredential()
+        # In Docker, we use mounted Azure credentials from the host.
+        # SharedTokenCacheCredential reads from msal_token_cache.bin
+        # EnvironmentCredential reads AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+        _shared_credential = DefaultAzureCredential(
+            exclude_visual_studio_code_credential=True,
+            exclude_powershell_credential=True,
+            exclude_developer_cli_credential=True,
+        )
     return _shared_credential
 
 

@@ -7,7 +7,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Set the working directory
 WORKDIR /app
 
-# Install system dependencies and Microsoft ODBC Driver 18
+# Install system dependencies, Microsoft ODBC Driver 18, and Azure CLI
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
@@ -15,11 +15,15 @@ RUN apt-get update && apt-get install -y \
     g++ \
     make \
     unixodbc-dev \
+    ca-certificates \
+    apt-transport-https \
+    lsb-release \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
     && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list | tee /etc/apt/sources.list.d/mssql-release.list \
     && sed -i 's/arch=amd64/& signed-by=\/usr\/share\/keyrings\/microsoft-prod.gpg/' /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
     && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
+    && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files (both pyproject.toml and uv.lock)

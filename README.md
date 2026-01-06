@@ -30,6 +30,7 @@ cp .env.example .env
 3. Run the application:
 ```bash
 uvicorn src.app:app --reload
+uv run python -m uvicorn src.app:app --reload
 uv run uvicorn src.app:app --reload
 ```
 
