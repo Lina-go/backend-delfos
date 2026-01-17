@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,7 @@ from src.api.models import (
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
 from src.infrastructure.database.connection import execute_insert, execute_query
+from src.infrastructure.storage.blob_client import BlobStorageClient
 from src.orchestrator.pipeline import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -272,12 +274,23 @@ async def add_project_item(
     else:
         safe_title = title_to_use
 
+    # Clean URL: Remove SAS token if present before saving to database
+    content_to_save = request.content
+    if content_to_save and "blob.core.windows.net" in content_to_save:
+        try:
+            parsed = urlparse(content_to_save)
+            # Reconstruct URL without the query string (SAS token)
+            content_to_save = urlunparse(parsed._replace(query=""))
+            logger.debug(f"Cleaned URL before saving: removed SAS token")
+        except Exception as e:
+            logger.warning(f"Could not clean URL: {e}, saving as-is")
+
     # Use parameterized query to prevent SQL injection
     sql = """
     INSERT INTO dbo.ProjectItems (id, projectId, type, content, title, createdAt)
     VALUES (?, ?, ?, ?, ?, GETDATE())
     """
-    params = (item_id, project_id, request.type, request.content, safe_title)
+    params = (item_id, project_id, request.type, content_to_save, safe_title)
 
     # Execute directly via database connection
     result = await execute_insert(settings, sql, params)
@@ -306,18 +319,47 @@ async def get_project_items(
     try:
         items_data = await execute_query(settings, sql, (project_id,))
 
+        # Sign blob URLs dynamically when retrieving
+        storage_client = BlobStorageClient(settings)
+        container_name = settings.azure_storage_container_name or "charts"
+
         items = []
         for item in items_data:
+            content_url = item.get("content")
+
+            # Sign URL if it's a blob URL
+            if content_url and "blob.core.windows.net" in content_url:
+                try:
+                    # Remove any existing SAS token from URL before parsing
+                    url_to_parse = content_url.split("?")[0]
+                    parsed = urlparse(url_to_parse)
+                    # Extract blob name from path (format: /container/blob-name)
+                    path_parts = parsed.path.strip("/").split("/", 1)
+                    if len(path_parts) > 1:
+                        blob_name = path_parts[1]
+                        # Generate new SAS token valid for 1 hour
+                        content_url = await storage_client.get_blob_sas_url(
+                            container_name=container_name,
+                            blob_name=blob_name,
+                        )
+                        logger.debug(f"Signed project item URL for blob: {blob_name}")
+                    else:
+                        logger.warning(f"Could not extract blob name from project item URL: {content_url}")
+                except Exception as e:
+                    logger.error(f"Error signing URL for project item: {e}", exc_info=True)
+
             items.append(
                 {
                     "id": str(item.get("id")),
                     "project_id": str(item.get("projectId")),
                     "type": item.get("type"),
-                    "content": item.get("content"),
+                    "content": content_url,  # Use signed URL
                     "title": item.get("title"),
                     "created_at": item.get("created_at"),
                 }
             )
+
+        await storage_client.close()
         return items
     except Exception as e:
         logger.error(f"Error fetching project items: {e}")

@@ -8,9 +8,7 @@ from src.config.settings import Settings
 from src.infrastructure.llm.executor import run_single_agent
 from src.infrastructure.llm.factory import (
     azure_agent_client,
-    create_anthropic_agent,
     get_shared_credential,
-    is_anthropic_model,
 )
 from src.orchestrator.state import PipelineState
 from src.services.formatting.code_formatter import CodeFormatter
@@ -78,29 +76,18 @@ class ResponseFormatter:
             model = self.settings.format_agent_model
 
             # Create agent without tools
-            if is_anthropic_model(model):
-                agent = create_anthropic_agent(
-                    settings=self.settings,
+            credential = get_shared_credential()
+            # ResponseFormatter doesn't use tools, only needs 1-2 iterations
+            async with azure_agent_client(
+                self.settings, model, credential, max_iterations=2
+            ) as client:
+                agent = client.create_agent(
                     name="ResponseFormatter",
                     instructions=system_prompt,
-                    tools=None,
-                    model=model,
                     max_tokens=self.settings.format_max_tokens,
+                    temperature=self.settings.format_temperature,
                 )
                 response = await run_single_agent(agent, str(format_input))
-            else:
-                credential = get_shared_credential()
-                # ResponseFormatter doesn't use tools, only needs 1-2 iterations
-                async with azure_agent_client(
-                    self.settings, model, credential, max_iterations=2
-                ) as client:
-                    agent = client.create_agent(
-                        name="ResponseFormatter",
-                        instructions=system_prompt,
-                        max_tokens=self.settings.format_max_tokens,
-                        temperature=self.settings.format_temperature,
-                    )
-                    response = await run_single_agent(agent, str(format_input))
 
             result = JSONParser.extract_json(response)
             return result

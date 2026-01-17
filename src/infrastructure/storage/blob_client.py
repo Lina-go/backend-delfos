@@ -1,9 +1,11 @@
 """Azure Blob Storage client."""
 
 import logging
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from azure.core.exceptions import AzureError
-from azure.storage.blob import ContentSettings
+from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
 from azure.storage.blob.aio import BlobServiceClient
 
 from src.config.settings import Settings
@@ -226,6 +228,91 @@ class BlobStorageClient:
             raise
         except Exception as e:
             logger.error(f"Unexpected error deleting blob: {e}", exc_info=True)
+            raise
+
+    async def get_blob_sas_url(
+        self,
+        container_name: str,
+        blob_name: str,
+        expiry_minutes: int = 60,
+        account_url: str | None = None,
+    ) -> str:
+        """
+        Generate a signed (SAS) URL for a blob that is valid temporarily.
+
+        Args:
+            container_name: Container name (defaults to settings.azure_storage_container_name)
+            blob_name: Blob name
+            expiry_minutes: Number of minutes until the SAS token expires (default: 60)
+            account_url: Storage account URL (optional, overrides settings)
+
+        Returns:
+            Signed blob URL with SAS token
+
+        Raises:
+            ValueError: If storage configuration is missing
+        """
+        if not container_name:
+            container_name = self.settings.azure_storage_container_name or "charts"
+
+        try:
+            client = self._get_client(account_url)
+            blob_client = client.get_blob_client(container=container_name, blob=blob_name)
+            account_name = client.account_name
+
+            now = datetime.now(timezone.utc)
+            expiry = now + timedelta(minutes=expiry_minutes)
+
+            # Option A: Using Connection String
+            if self.settings.azure_storage_connection_string:
+                # Parse connection string to extract account key
+                conn_str = self.settings.azure_storage_connection_string
+                account_key = None
+                for part in conn_str.split(";"):
+                    if part.startswith("AccountKey="):
+                        account_key = part.split("AccountKey=", 1)[1]
+                        break
+
+                if not account_key:
+                    error_msg = "Could not extract account key from connection string. Cannot generate SAS token."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
+                sas_token = generate_blob_sas(
+                    account_name=account_name,
+                    container_name=container_name,
+                    blob_name=blob_name,
+                    account_key=account_key,
+                    permission=BlobSasPermissions(read=True),
+                    expiry=expiry,
+                )
+                return f"{blob_client.url}?{sas_token}"
+
+            # Option B: Using Managed Identity (Production recommended)
+            else:
+                # Get user delegation key for Managed Identity
+                user_delegation_key = await client.get_user_delegation_key(
+                    key_start_time=now,
+                    key_expiry_time=expiry,
+                )
+
+                sas_token = generate_blob_sas(
+                    account_name=account_name,
+                    container_name=container_name,
+                    blob_name=blob_name,
+                    user_delegation_key=user_delegation_key,
+                    permission=BlobSasPermissions(read=True),
+                    expiry=expiry,
+                )
+                return f"{blob_client.url}?{sas_token}"
+
+        except Exception as e:
+            logger.error(
+                f"Error generating SAS token for blob {blob_name} in container {container_name}: {e}",
+                exc_info=True,
+            )
+            # Do not return unsigned URL as it will fail with anonymous access disabled
+            # Re-raise the exception so callers can handle it appropriately
             raise
 
     async def close(self) -> None:

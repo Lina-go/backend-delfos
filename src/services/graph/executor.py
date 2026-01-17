@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from src.config.settings import Settings
 from src.services.graph.tools import (
@@ -86,6 +87,28 @@ class GraphExecutor:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("PNG upload skipped or failed: %s", exc)
+
+                # Sign URLs before returning (required when anonymous access is disabled)
+                try:
+                    if html_url and "blob.core.windows.net" in html_url:
+                        try:
+                            html_url = await storage.get_blob_sas_url(
+                                container_name=container,
+                                blob_name=html_blob,
+                            )
+                        except Exception as e:
+                            logger.error(f"Error signing html_url: {e}")
+
+                    if png_url and "blob.core.windows.net" in png_url:
+                        try:
+                            png_url = await storage.get_blob_sas_url(
+                                container_name=container,
+                                blob_name=png_blob,
+                            )
+                        except Exception as e:
+                            logger.error(f"Error signing png_url: {e}")
+                except Exception as e:
+                    logger.error(f"Error signing blob URLs: {e}")
 
                 return {
                     "image_url": png_url,

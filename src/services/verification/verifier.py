@@ -11,9 +11,7 @@ from src.config.settings import Settings
 from src.infrastructure.llm.executor import run_single_agent
 from src.infrastructure.llm.factory import (
     azure_agent_client,
-    create_anthropic_agent,
     get_shared_credential,
-    is_anthropic_model,
 )
 from src.utils.json_parser import JSONParser
 
@@ -79,29 +77,18 @@ class ResultVerifier:
             model = self.settings.verification_agent_model
 
             # Create agent
-            if is_anthropic_model(model):
-                agent = create_anthropic_agent(
-                    settings=self.settings,
+            credential = get_shared_credential()
+            # ResultVerifier doesn't use tools, only needs 1-2 iterations
+            async with azure_agent_client(
+                self.settings, model, credential, max_iterations=2
+            ) as client:
+                agent = client.create_agent(
                     name="ResultVerifier",
                     instructions=system_prompt,
-                    tools=None,
-                    model=model,
                     max_tokens=self.settings.verification_max_tokens,
+                    temperature=self.settings.verification_temperature,
                 )
                 response = await run_single_agent(agent, user_input)
-            else:
-                credential = get_shared_credential()
-                # ResultVerifier doesn't use tools, only needs 1-2 iterations
-                async with azure_agent_client(
-                    self.settings, model, credential, max_iterations=2
-                ) as client:
-                    agent = client.create_agent(
-                        name="ResultVerifier",
-                        instructions=system_prompt,
-                        max_tokens=self.settings.verification_max_tokens,
-                        temperature=self.settings.verification_temperature,
-                    )
-                    response = await run_single_agent(agent, user_input)
 
             # Parse response
             result = JSONParser.extract_json(response)

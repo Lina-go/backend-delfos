@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     ######################################
 
     anthropic_api_key: str | None = None
+    # Use Anthropic API directly instead of Azure Foundry for Claude models
+    # Set to True to use Anthropic API, False to use Azure Foundry deployment
+    use_anthropic_api_for_claude: bool = False
+    
+    # Anthropic Foundry configuration (for Claude models on Foundry)
+    # These are read by AsyncAnthropicFoundry from environment variables
+    anthropic_foundry_api_key: str | None = None
+    anthropic_foundry_resource: str | None = None
 
     ######################################
     # Agent model configurations
@@ -53,7 +61,7 @@ class Settings(BaseSettings):
     intent_max_tokens: int = 300
 
     # SQL Agent
-    sql_agent_model: str = "claude-sonnet-4-5-20250929"
+    sql_agent_model: str = "claude-sonnet-4-5"
     sql_temperature: float = 0.0
     sql_max_tokens: int = 4096
 

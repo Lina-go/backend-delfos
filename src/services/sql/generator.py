@@ -10,8 +10,14 @@ from src.config.prompts import (
 )
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
-from src.infrastructure.llm.executor import run_single_agent
-from src.infrastructure.llm.factory import create_anthropic_agent
+from src.infrastructure.llm.executor import run_agent_with_format
+from src.infrastructure.llm.factory import (
+    azure_agent_client,
+    create_anthropic_agent,
+    create_anthropic_foundry_agent,
+    get_shared_credential,
+    is_anthropic_model,
+)
 from src.infrastructure.mcp.client import mcp_connection
 from src.services.sql.models import SQLResult
 from src.utils.json_parser import JSONParser
@@ -142,36 +148,94 @@ class SQLGenerator:
                 "get_primary_keys",
             ]
 
-            async with mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp:
-                agent = create_anthropic_agent(
-                    settings=self.settings,
-                    name="SQLGenerator",
-                    instructions=system_prompt,
-                    tools=mcp,
-                    model=model,
-                    max_tokens=sql_max_tokens,
-                    response_format=SQLResult,
+            # Check if this is an Anthropic (Claude) model
+            if is_anthropic_model(model):
+                # Use Anthropic API directly if configured, otherwise use Azure Foundry
+                if self.settings.use_anthropic_api_for_claude:
+                    if not self.settings.anthropic_api_key:
+                        raise ValueError(
+                            "use_anthropic_api_for_claude is True but ANTHROPIC_API_KEY is not set"
+                        )
+                    logger.info(f"Using Anthropic API directly for Claude model: {model}")
+                    async with mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp:
+                        agent = create_anthropic_agent(
+                            settings=self.settings,
+                            name="SQLGenerator",
+                            instructions=system_prompt,
+                            tools=mcp,
+                            model=model,
+                            max_tokens=sql_max_tokens,
+                            response_format=SQLResult,
+                        )
+                        result_model = await run_agent_with_format(
+                            agent, user_input, response_format=SQLResult
+                        )
+                else:
+                    # Use Anthropic on Foundry (not Azure AI Foundry)
+                    logger.info(f"Using Anthropic on Foundry for Claude model: {model}")
+                    async with mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp:
+                        agent = create_anthropic_foundry_agent(
+                            settings=self.settings,
+                            name="SQLGenerator",
+                            instructions=system_prompt,
+                            tools=mcp,
+                            model=model,
+                            max_tokens=sql_max_tokens,
+                            response_format=SQLResult,
+                        )
+                        result_model = await run_agent_with_format(
+                            agent, user_input, response_format=SQLResult
+                        )
+            else:
+                # For GPT models, use Azure AI Foundry
+                credential = get_shared_credential()
+                async with (
+                    azure_agent_client(self.settings, model, credential, max_iterations=5) as client,
+                    mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp,
+                ):
+                    agent = client.create_agent(
+                        name="SQLGenerator",
+                        instructions=system_prompt,
+                        tools=mcp,
+                        max_tokens=sql_max_tokens,
+                        temperature=self.settings.sql_temperature,
+                    )
+                    result_model = await run_agent_with_format(
+                        agent, user_input, response_format=SQLResult
+                    )
+
+            # Handle response: could be SQLResult model or raw string
+            if isinstance(result_model, SQLResult):
+                result_dict = result_model.model_dump()
+            elif isinstance(result_model, str):
+                # Try to extract JSON from raw string response
+                logger.warning(
+                    f"SQL agent returned raw string instead of SQLResult model. Raw response (first 1000 chars): {result_model[:1000]}"
                 )
-                # Execute agent and get raw response
-                raw_result = await run_single_agent(agent, user_input)
-
-            # Extract JSON from response
-            sql_json = JSONParser.extract_json(raw_result)
-
-            if not sql_json:
+                sql_json = JSONParser.extract_json(result_model)
+                if not sql_json:
+                    logger.error(
+                        f"Could not extract JSON from SQL agent response. Full raw response: {result_model}"
+                    )
+                    return {
+                        "pregunta_original": message,
+                        "sql": "",
+                        "tablas": [],
+                        "resumen": f"Error: Could not parse SQL agent response. Raw response: {result_model[:200]}...",
+                    }
+                # Validate and return as dict
+                sql_result = SQLResult(**sql_json)
+                result_dict = sql_result.model_dump()
+            else:
                 logger.error(
-                    f"Could not extract JSON from SQL agent response. Raw response (first 500 chars): {raw_result[:500]}"
+                    f"Unexpected response type from SQL agent: {type(result_model)}"
                 )
                 return {
                     "pregunta_original": message,
                     "sql": "",
                     "tablas": [],
-                    "resumen": "Error: Could not parse SQL agent response",
+                    "resumen": f"Error: Unexpected response type {type(result_model)}",
                 }
-
-            # Validate and return as dict
-            sql_result = SQLResult(**sql_json)
-            result_dict = sql_result.model_dump()
 
             # Cache the result if this was a first attempt (no previous errors)
             if use_cache and cache_key:
