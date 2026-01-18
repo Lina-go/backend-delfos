@@ -1,5 +1,5 @@
 """
-Database configuration for FinancialDB.
+Database configuration for SuperDB.
 """
 
 from dataclasses import dataclass
@@ -67,307 +67,115 @@ DATABASE_TABLES: dict[str, TableInfo] = {
             ),
         ],
     ),
-    "dbo.Branches": TableInfo(
-        table_name="dbo.Branches",
-        table_description="Branches table containing branch information",
+    "dbo.Tasas_Captacion": TableInfo(
+        table_name="dbo.Tasas_Captacion",
+        table_description="Tasas captacion table containing interest rate observations",
         table_columns=[
             ColumnInfo(
-                column_name="id",
+                column_name="TIPOENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Branch ID (primary key)",
+                column_description="Financial entity classification",
             ),
             ColumnInfo(
-                column_name="branchName",
+                column_name="CODIGOENTIDAD",
+                column_type=ColumnType.INTEGER,
+                column_description="Unique entity identifier",
+            ),
+            ColumnInfo(
+                column_name="NOMBREENTIDAD",
                 column_type=ColumnType.STRING,
-                column_description="Branch name",
+                column_description="Official entity name",
             ),
             ColumnInfo(
-                column_name="branchCode",
-                column_type=ColumnType.STRING,
-                column_description="Branch code",
-            ),
-            ColumnInfo(
-                column_name="Address",
-                column_type=ColumnType.STRING,
-                column_description="Branch address",
-            ),
-            ColumnInfo(
-                column_name="PhoneNumber",
-                column_type=ColumnType.STRING,
-                column_description="Branch phone number",
-            ),
-        ],
-    ),
-    "dbo.Employees": TableInfo(
-        table_name="dbo.Employees",
-        table_description="Employees table linking people to branches",
-        table_columns=[
-            ColumnInfo(
-                column_name="id",
-                column_type=ColumnType.INTEGER,
-                column_description="Employee ID (primary key)",
-            ),
-            ColumnInfo(
-                column_name="personId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to People.id",
-            ),
-            ColumnInfo(
-                column_name="branchId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Branches.id",
-            ),
-            ColumnInfo(
-                column_name="position",
-                column_type=ColumnType.STRING,
-                column_description="Employee position",
-            ),
-        ],
-    ),
-    "dbo.Customers": TableInfo(
-        table_name="dbo.Customers",
-        table_description="Customers table linking people to customer type",
-        table_columns=[
-            ColumnInfo(
-                column_name="id",
-                column_type=ColumnType.INTEGER,
-                column_description="Customer ID (primary key)",
-            ),
-            ColumnInfo(
-                column_name="personId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to People.id",
-            ),
-            ColumnInfo(
-                column_name="customerType",
-                column_type=ColumnType.STRING,
-                column_description="Customer type (natural/juridical)",
-            ),
-        ],
-    ),
-    "dbo.Accounts": TableInfo(
-        table_name="dbo.Accounts",
-        table_description="Accounts table containing account information",
-        table_columns=[
-            ColumnInfo(
-                column_name="id",
-                column_type=ColumnType.INTEGER,
-                column_description="Account ID (primary key)",
-            ),
-            ColumnInfo(
-                column_name="branchId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Branches.id",
-            ),
-            ColumnInfo(
-                column_name="accountType",
-                column_type=ColumnType.STRING,
-                column_description="Account type (savings/checking)",
-            ),
-            ColumnInfo(
-                column_name="accountNumber",
-                column_type=ColumnType.STRING,
-                column_description="Account number",
-            ),
-            ColumnInfo(
-                column_name="currentBalance",
-                column_type=ColumnType.FLOAT,
-                column_description="Current account balance",
-            ),
-            ColumnInfo(
-                column_name="createdAt",
-                column_type=ColumnType.DATETIME,
-                column_description="Account creation date",
-            ),
-            ColumnInfo(
-                column_name="closedAt",
-                column_type=ColumnType.DATETIME,
-                column_description="Account closure date (nullable)",
-            ),
-            ColumnInfo(
-                column_name="accountStatus",
-                column_type=ColumnType.STRING,
-                column_description="Account status (active/closed)",
-            ),
-        ],
-    ),
-    "dbo.AccountOwnerships": TableInfo(
-        table_name="dbo.AccountOwnerships",
-        table_description="Account ownerships table linking accounts to customers",
-        table_columns=[
-            ColumnInfo(
-                column_name="id",
-                column_type=ColumnType.INTEGER,
-                column_description="Ownership ID (primary key)",
-            ),
-            ColumnInfo(
-                column_name="accountId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Accounts.id",
-            ),
-            ColumnInfo(
-                column_name="ownerId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Customers.id",
-            ),
-        ],
-    ),
-    "dbo.Loans": TableInfo(
-        table_name="dbo.Loans",
-        table_description="Loans table containing loan information",
-        table_columns=[
-            ColumnInfo(
-                column_name="id",
-                column_type=ColumnType.INTEGER,
-                column_description="Loan ID (primary key)",
-            ),
-            ColumnInfo(
-                column_name="customerId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Customers.id",
-            ),
-            ColumnInfo(
-                column_name="loanType",
-                column_type=ColumnType.STRING,
-                column_description="Loan type",
-            ),
-            ColumnInfo(
-                column_name="loanAmount",
-                column_type=ColumnType.FLOAT,
-                column_description="Loan amount",
-            ),
-            ColumnInfo(
-                column_name="interestRate",
-                column_type=ColumnType.FLOAT,
-                column_description="Interest rate",
-            ),
-            ColumnInfo(
-                column_name="term",
-                column_type=ColumnType.INTEGER,
-                column_description="Loan term (in months)",
-            ),
-            ColumnInfo(
-                column_name="startDate",
+                column_name="FECHACORTE",
                 column_type=ColumnType.DATE,
-                column_description="Loan start date",
+                column_description="Observation cutoff date",
             ),
             ColumnInfo(
-                column_name="endDate",
-                column_type=ColumnType.DATE,
-                column_description="Loan end date",
+                column_name="UCA",
+                column_type=ColumnType.INTEGER,
+                column_description="Analytical classification unit for rate category",
             ),
             ColumnInfo(
-                column_name="status",
+                column_name="NOMBRE_UNIDAD_DE_CAPTURA",
                 column_type=ColumnType.STRING,
-                column_description="Loan status (active/closed)",
+                column_description="Description of the UCA rate category",
             ),
-        ],
-    ),
-    "dbo.LoanPayments": TableInfo(
-        table_name="dbo.LoanPayments",
-        table_description="Loan payments table containing payment information",
-        table_columns=[
             ColumnInfo(
-                column_name="id",
+                column_name="SUBCUENTA",
                 column_type=ColumnType.INTEGER,
-                column_description="Payment ID (primary key)",
+                column_description="Subaccount code for additional classification",
             ),
             ColumnInfo(
-                column_name="loanId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Loans.id",
-            ),
-            ColumnInfo(
-                column_name="scheduledPaymentDate",
-                column_type=ColumnType.DATE,
-                column_description="Scheduled payment date",
-            ),
-            ColumnInfo(
-                column_name="paymentAmount",
-                column_type=ColumnType.FLOAT,
-                column_description="Total payment amount",
-            ),
-            ColumnInfo(
-                column_name="principalAmount",
-                column_type=ColumnType.FLOAT,
-                column_description="Principal portion of payment",
-            ),
-            ColumnInfo(
-                column_name="interestAmount",
-                column_type=ColumnType.FLOAT,
-                column_description="Interest portion of payment",
-            ),
-            ColumnInfo(
-                column_name="paidAmount",
-                column_type=ColumnType.FLOAT,
-                column_description="Amount actually paid",
-            ),
-            ColumnInfo(
-                column_name="paidDate",
-                column_type=ColumnType.DATE,
-                column_description="Date payment was made (nullable)",
-            ),
-        ],
-    ),
-    "dbo.Transactions": TableInfo(
-        table_name="dbo.Transactions",
-        table_description="Transactions table containing transaction information",
-        table_columns=[
-            ColumnInfo(
-                column_name="id",
-                column_type=ColumnType.INTEGER,
-                column_description="Transaction ID (primary key)",
-            ),
-            ColumnInfo(
-                column_name="accountId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Accounts.id",
-            ),
-            ColumnInfo(
-                column_name="transactionType",
+                column_name="DESCRIPCION",
                 column_type=ColumnType.STRING,
-                column_description="Transaction type (deposit/withdrawal)",
+                column_description="Description of the reporting concept",
             ),
             ColumnInfo(
-                column_name="amount",
+                column_name="TASA",
                 column_type=ColumnType.FLOAT,
-                column_description="Transaction amount",
+                column_description="Reported interest rate",
             ),
             ColumnInfo(
-                column_name="transactionDate",
-                column_type=ColumnType.DATETIME,
-                column_description="Transaction date",
+                column_name="MONTO",
+                column_type=ColumnType.FLOAT,
+                column_description="Associated monetary amount",
             ),
         ],
     ),
-    "dbo.Transfers": TableInfo(
-        table_name="dbo.Transfers",
-        table_description="Transfers table containing transfer information between accounts",
+    "dbo.Distribucion_Cartera": TableInfo(
+        table_name="dbo.Distribucion_Cartera",
+        table_description="Distribucion cartera table containing credit portfolio balances",
         table_columns=[
             ColumnInfo(
-                column_name="id",
+                column_name="TIPO_ENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Transfer ID (primary key)",
+                column_description="Financial entity classification",
             ),
             ColumnInfo(
-                column_name="originAccountId",
+                column_name="CODIGO_ENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Accounts.id (origin)",
+                column_description="Unique entity identifier",
             ),
             ColumnInfo(
-                column_name="destinationAccountId",
-                column_type=ColumnType.INTEGER,
-                column_description="Foreign key to Accounts.id (destination)",
+                column_name="NOMBREENTIDAD",
+                column_type=ColumnType.STRING,
+                column_description="Official entity name",
             ),
             ColumnInfo(
-                column_name="amount",
+                column_name="FECHA_CORTE",
+                column_type=ColumnType.DATE,
+                column_description="Portfolio reporting cutoff date",
+            ),
+            ColumnInfo(
+                column_name="UNICAP",
+                column_type=ColumnType.INTEGER,
+                column_description="Credit product classification unit",
+            ),
+            ColumnInfo(
+                column_name="DESCRIP_UC",
+                column_type=ColumnType.STRING,
+                column_description="Credit product description",
+            ),
+            ColumnInfo(
+                column_name="RENGLON",
+                column_type=ColumnType.INTEGER,
+                column_description="Additional portfolio classification",
+            ),
+            ColumnInfo(
+                column_name="DESC_RENGLON",
+                column_type=ColumnType.STRING,
+                column_description="Portfolio classification description",
+            ),
+            ColumnInfo(
+                column_name="SALDO_CARTERA_A_FECHA_DE_CORTE",
                 column_type=ColumnType.FLOAT,
-                column_description="Transfer amount",
+                column_description="Portfolio balance at cutoff date",
             ),
             ColumnInfo(
-                column_name="occurenceTime",
-                column_type=ColumnType.DATETIME,
-                column_description="Transfer occurrence time",
+                column_name="VIGENTE",
+                column_type=ColumnType.FLOAT,
+                column_description="Current portfolio balance",
             ),
         ],
     ),
@@ -379,56 +187,18 @@ DATABASE_TABLES: dict[str, TableInfo] = {
 
 CONCEPT_TO_TABLES: dict[str, list[str]] = {
     # Spanish terms
-    "clientes": ["dbo.Customers", "dbo.People"],
-    "cliente": ["dbo.Customers", "dbo.People"],
-    "personas": ["dbo.People"],
-    "persona": ["dbo.People"],
-    "cuentas": ["dbo.Accounts", "dbo.AccountOwnerships"],
-    "cuenta": ["dbo.Accounts", "dbo.AccountOwnerships"],
-    "saldo": ["dbo.Accounts"],
-    "préstamos": ["dbo.Loans", "dbo.LoanPayments"],
-    "prestamos": ["dbo.Loans", "dbo.LoanPayments"],
-    "préstamo": ["dbo.Loans", "dbo.LoanPayments"],
-    "prestamo": ["dbo.Loans", "dbo.LoanPayments"],
-    "pagos": ["dbo.LoanPayments", "dbo.Transactions"],
-    "pago": ["dbo.LoanPayments", "dbo.Transactions"],
-    "transacciones": ["dbo.Transactions"],
-    "transaccion": ["dbo.Transactions"],
-    "transferencias": ["dbo.Transfers"],
-    "transferencia": ["dbo.Transfers"],
-    "empleados": ["dbo.Employees", "dbo.People"],
-    "empleado": ["dbo.Employees", "dbo.People"],
-    "sucursales": ["dbo.Branches"],
-    "sucursal": ["dbo.Branches"],
-    "tipo de cuenta": ["dbo.Accounts"],
-    "tipo cuenta": ["dbo.Accounts"],
-    "tipo de préstamo": ["dbo.Loans"],
-    "tipo prestamo": ["dbo.Loans"],
-    "tipo de cliente": ["dbo.Customers"],
-    "tipo cliente": ["dbo.Customers"],
+    "tasas de captacion": ["dbo.Tasas_Captacion"],
+    "tasa de captacion": ["dbo.Tasas_Captacion"],
+    "tasa captacion": ["dbo.Tasas_Captacion"],
+    "captacion": ["dbo.Tasas_Captacion"],
+    "distribucion de cartera": ["dbo.Distribucion_Cartera"],
+    "distribucion cartera": ["dbo.Distribucion_Cartera"],
+    "cartera": ["dbo.Distribucion_Cartera"],
+    "portafolio crediticio": ["dbo.Distribucion_Cartera"],
     # English terms
-    "customers": ["dbo.Customers", "dbo.People"],
-    "customer": ["dbo.Customers", "dbo.People"],
-    "people": ["dbo.People"],
-    "person": ["dbo.People"],
-    "accounts": ["dbo.Accounts", "dbo.AccountOwnerships"],
-    "account": ["dbo.Accounts", "dbo.AccountOwnerships"],
-    "balance": ["dbo.Accounts"],
-    "loans": ["dbo.Loans", "dbo.LoanPayments"],
-    "loan": ["dbo.Loans", "dbo.LoanPayments"],
-    "payments": ["dbo.LoanPayments", "dbo.Transactions"],
-    "payment": ["dbo.LoanPayments", "dbo.Transactions"],
-    "transactions": ["dbo.Transactions"],
-    "transaction": ["dbo.Transactions"],
-    "transfers": ["dbo.Transfers"],
-    "transfer": ["dbo.Transfers"],
-    "employees": ["dbo.Employees", "dbo.People"],
-    "employee": ["dbo.Employees", "dbo.People"],
-    "branches": ["dbo.Branches"],
-    "branch": ["dbo.Branches"],
-    "account type": ["dbo.Accounts"],
-    "loan type": ["dbo.Loans"],
-    "customer type": ["dbo.Customers"],
+    "interest rate": ["dbo.Tasas_Captacion"],
+    "interest rates": ["dbo.Tasas_Captacion"],
+    "credit portfolio": ["dbo.Distribucion_Cartera"],
 }
 
 

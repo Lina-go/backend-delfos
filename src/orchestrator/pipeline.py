@@ -31,6 +31,7 @@ from src.services.sql.validation import SQLValidationService
 from src.services.triage.classifier import TriageClassifier
 from src.services.verification.verifier import ResultVerifier
 from src.services.viz.service import VisualizationService
+from src.config.archetypes import get_chart_type_for_archetype, get_archetype_letter_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -366,7 +367,8 @@ class PipelineOrchestrator:
             resumen=state.sql_resumen,
         )
         execution_time = (time.time() - start_time) * 1000
-        state.tipo_grafico = viz_result.get("tipo_grafico")
+        state.tipo_grafico = get_chart_type_for_archetype(get_archetype_letter_by_name(state.arquetipo))
+        logger.info(f"Determined chart type: {state.tipo_grafico} for archetype: {state.arquetipo}")
         state.powerbi_url = viz_result.get("powerbi_url")
         state.image_url = viz_result.get("image_url")
         state.run_id = viz_result.get("run_id")
@@ -391,7 +393,7 @@ class PipelineOrchestrator:
         try:
             start_time = time.time()
             run_id = str(viz_result.get("run_id"))
-            chart_type = str(viz_result.get("tipo_grafico"))
+            chart_type = state.tipo_grafico
             graph_result = await self.graph.generate(
                 run_id=run_id,
                 chart_type=chart_type,

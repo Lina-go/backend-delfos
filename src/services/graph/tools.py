@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any
+from collections import defaultdict
 
 import plotly.graph_objects as go
 
@@ -104,13 +105,26 @@ def generate_line_chart(
     """Generate a styled line chart and return HTML/PNG bytes."""
     if colors is None:
         colors = get_settings().chart_color_palette
-
-    x_values = [d.get("x_value", "") for d in data_points]
-    y_values = [d.get("y_value", 0) for d in data_points]
-
-    fig = go.Figure(
-        data=[go.Scatter(x=x_values, y=y_values, mode="lines+markers", line_color=colors[0])]
-    )
+ 
+    series_data: dict[str, dict[str, list]] = defaultdict(lambda: {"x": [], "y": []})
+    for d in data_points:
+        category = d.get("category", "default")
+        series_data[category]["x"].append(d.get("x_value", ""))
+        series_data[category]["y"].append(d.get("y_value", 0))
+ 
+    fig = go.Figure()
+    # Crear una línea por cada category
+    for idx, (category, values) in enumerate(series_data.items()):
+        color = colors[idx % len(colors)]
+        fig.add_trace(
+            go.Scatter(
+                x=values["x"],
+                y=values["y"],
+                mode="lines+markers",
+                name=category,
+                line_color=color,
+            )
+        )
     _apply_styling(fig, title)
     html_bytes, png_bytes = _render_outputs(fig)
     return {"fig": fig, "html_bytes": html_bytes, "png_bytes": png_bytes}

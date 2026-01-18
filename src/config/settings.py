@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     ######################################
     # Database configuration
     ######################################
-    database_name: str = "FinancialDB"
+    database_name: str = "SuperDB"
     database_schema: str = "dbo"
     database_connection_string: str = ""
 

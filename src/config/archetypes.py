@@ -43,8 +43,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=None,
         examples=[
-            "¿Cuál es el saldo total de las cuentas en el mes actual?",
-            "¿Cuál es el monto total de préstamos originados en el período seleccionado?",
+            "¿Cuál es el saldo total de la cartera del sistema a la fecha de corte?",
+            "¿Cuál fue la tasa de captación reportada por una entidad específica en un mes determinado?",
         ],
     ),
     Archetype.ARCHETYPE_B: ArchetypeInfo(
@@ -56,8 +56,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.LINE,
         examples=[
-            "¿Cómo ha evolucionado el saldo total de cuentas mes a mes durante el último año?",
-            "¿Cómo ha evolucionado el monto de préstamos originados por mes?",
+            "¿Cómo ha evolucionado el saldo total de la cartera durante el último año?",
+            "¿Cómo han evolucionado las tasas de captación del mercado en los últimos 12 meses por tipo de entidad?",
         ],
     ),
     Archetype.ARCHETYPE_C: ArchetypeInfo(
@@ -69,8 +69,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.PIE,
         examples=[
-            "¿Qué porcentaje del saldo total corresponde a cada tipo de cuenta en el mes actual?",
-            "¿Qué proporción del monto transado corresponde a cada tipo de transacción?",
+            "¿Qué porcentaje del saldo total de la cartera corresponde a cada tipo de producto?",
+            "¿Qué porcentaje del volumen del mercado corresponde a cada tipo de entidad financiera?",
         ],
     ),
     Archetype.ARCHETYPE_D: ArchetypeInfo(
@@ -82,8 +82,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.PIE,
         examples=[
-            "¿Cuál es la participación de cada sucursal en el monto total transado del mes?",
-            "¿Cuál es la participación de cada tipo de préstamo en el saldo total de préstamos activos?",
+            "¿Cuál es la participación de una entidad específica en el saldo total de la cartera del sistema?",
+            "¿Cuál es la participación de una entidad en el mercado de captación en un período determinado?",
         ],
     ),
     Archetype.ARCHETYPE_E: ArchetypeInfo(
@@ -95,8 +95,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.STACKED_BAR,
         examples=[
-            "¿Cómo contribuye cada tipo de transacción al monto total mensual transado?",
-            "¿Cómo contribuye cada sucursal al total de préstamos originados este trimestre?",
+            "¿Cómo contribuye cada producto al saldo total de la cartera?",
+            "¿Cómo contribuye cada segmento de cartera al total de cartera vigente?",
         ],
     ),
     Archetype.ARCHETYPE_F: ArchetypeInfo(
@@ -108,8 +108,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.BAR,
         examples=[
-            "¿Cómo se compara el saldo promedio entre cuentas de ahorro y cuentas corrientes durante el año?",
-            "¿Cómo se compara el monto promedio transado entre clientes naturales y jurídicos?",
+            "¿Cómo se compara el saldo de la cartera de consumo frente a la cartera de vivienda?",
+            "¿Cómo se comparan las tasas de captación entre bancos y compañías de financiamiento?",
         ],
     ),
     Archetype.ARCHETYPE_G: ArchetypeInfo(
@@ -121,8 +121,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.BAR,
         examples=[
-            "¿Cómo se ordenan las sucursales según el monto total transado en el período?",
-            "¿Cómo se ordenan los tipos de préstamo según su monto originado anual?",
+            "¿Cuáles son las entidades con mayor saldo de cartera en el sistema financiero?",
+            "¿Cuáles son las entidades que reportan las tasas de captación más altas en un período determinado?",
         ],
     ),
     Archetype.ARCHETYPE_H: ArchetypeInfo(
@@ -134,10 +134,11 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.COMPARACION,
         default_chart=ChartType.PIE,
         examples=[
-            "¿Qué tan concentrado está el monto total transado en las 3 principales sucursales?",
-            "¿Qué tan concentrada está la originación de préstamos en los primeros 3 tipos de préstamo?",
+            "¿Qué tan concentrado está el saldo de la cartera en las cinco principales entidades del sistema?",
+            "¿Qué tan concentrado está el mercado de captación en las principales entidades financieras?",
         ],
     ),
+
     # ==========================================================================
     # Relationship (I–J)
     # ==========================================================================
@@ -150,8 +151,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.RELACION,
         default_chart=None,
         examples=[
-            "¿Cómo se relaciona el saldo de cuentas con el monto de préstamos originados por cliente durante el año?",
-            "¿Cómo se relaciona el monto transado con el número de transacciones por mes?",
+            "¿Cómo se relacionan las tasas de captación con el volumen captado por las entidades?",
+            "¿Cómo se relaciona el saldo total de la cartera con el nivel de cartera vigente por producto?",
         ],
     ),
     Archetype.ARCHETYPE_J: ArchetypeInfo(
@@ -163,10 +164,11 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.RELACION,
         default_chart=None,
         examples=[
-            "¿Cuál es la sensibilidad del monto total de préstamos ante cambios en la tasa de interés durante el año?",
-            "¿Cuál es la sensibilidad del saldo total de cuentas ante cambios en el número de clientes durante el trimestre?",
+            "¿Qué tan sensible es el volumen captado ante cambios en las tasas de interés del mercado?",
+            "¿Qué tan sensible es la cartera vigente ante variaciones en el saldo total de la cartera?",
         ],
     ),
+
     # ==========================================================================
     # Projection (K–L)
     # ==========================================================================
@@ -179,8 +181,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.PROYECCION,
         default_chart=None,
         examples=[
-            "¿Qué porción del cambio en el monto total transado se explica por nuevas cuentas vs transacciones existentes en el último trimestre?",
-            "¿Qué porción del cambio en el saldo de préstamos se explica por originaciones nuevas vs pagos realizados durante el año?",
+            "¿Qué parte del crecimiento de la cartera se explica por consumo frente a cartera comercial?",
+            "¿Qué parte del cambio en el volumen del mercado se explica por bancos frente a otras entidades?",
         ],
     ),
     Archetype.ARCHETYPE_L: ArchetypeInfo(
@@ -192,10 +194,11 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.PROYECCION,
         default_chart=None,
         examples=[
-            "Si la tasa de interés aumenta un 2%, ¿cuál sería el impacto en el monto total de préstamos originados durante el próximo trimestre?",
-            "Si se duplica el número de clientes nuevos, ¿cuál sería el impacto en el saldo total de cuentas durante el próximo año?",
+            "Si las tasas de captación aumentan, ¿cuál sería el impacto esperado en el volumen captado en los próximos meses?",
+            "Si la cartera vigente crece por encima del promedio histórico, ¿cuál sería el impacto en el saldo total de la cartera?",
         ],
     ),
+
     # ==========================================================================
     # Simulation (M–N)
     # ==========================================================================
@@ -208,8 +211,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.SIMULACION,
         default_chart=None,
         examples=[
-            "Dado un límite de capital disponible de 10 millones, ¿hasta qué nivel puede llegar el monto total de préstamos originados durante el próximo año?",
-            "Dado un número máximo de 1000 transacciones diarias, ¿hasta qué nivel puede llegar el monto total transado durante el próximo mes?",
+            "Dado un límite de crecimiento de cartera, ¿hasta qué nivel podría llegar el saldo total en el próximo año?",
+            "Dado un tope de fondeo disponible, ¿hasta qué nivel podría crecer el volumen captado manteniendo las tasas actuales?",
         ],
     ),
     Archetype.ARCHETYPE_N: ArchetypeInfo(
@@ -221,8 +224,8 @@ ARCHETYPES: dict[Archetype, ArchetypeInfo] = {
         pattern_type=PatternType.SIMULACION,
         default_chart=None,
         examples=[
-            "¿Qué nivel de tasa de interés se requiere para alcanzar un monto total de préstamos originados de 50 millones en el próximo año?",
-            "¿Qué número de clientes nuevos se requiere para alcanzar un saldo total de cuentas de 100 millones en el próximo trimestre?",
+            "¿Qué crecimiento de la cartera vigente se requiere para alcanzar un saldo objetivo en un año?",
+            "¿Qué nivel de tasas de captación sería necesario para alcanzar un volumen objetivo del mercado en el próximo trimestre?",
         ],
     ),
 }
@@ -267,3 +270,23 @@ def get_archetype_name(archetype_letter: str) -> str:
     """
     archetype_enum = Archetype(archetype_letter)
     return ARCHETYPES[archetype_enum].name
+
+def get_chart_type_for_archetype(archetype: Archetype) -> ChartType | None:
+    """Get default chart type for an archetype.
+    Args:
+        archetype: Archetype
+    Returns:
+        ChartType | None: Default chart type
+    """
+    return ARCHETYPES[archetype].default_chart
+def get_archetype_letter_by_name(name: str) -> Archetype | None:
+    """Get archetype letter by archetype name.
+    Args:
+        name: str
+    Returns:
+        Archetype | None: Archetype enum or None if not found
+    """
+    for archetype, info in ARCHETYPES.items():
+        if info.name == name:
+            return archetype
+    return None

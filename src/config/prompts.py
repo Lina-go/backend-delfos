@@ -2,7 +2,7 @@
 System prompts for NL2SQL pipeline agents.
 """
 
-from src.config.archetypes import get_archetypes_by_pattern_type
+from src.config.archetypes import get_archetypes_by_pattern_type, get_chart_type_for_archetype
 from src.config.constants import Intent, PatternType, QueryType
 from src.config.database import CONCEPT_TO_TABLES, DATABASE_TABLES, get_all_table_names
 
@@ -25,13 +25,19 @@ def build_triage_system_prompt() -> str:
         ""
         "## Categories "
         ""
-        f"1. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on FinancialDB data. "
+        f"1. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on SuperDB data. "
         "   - Requires querying the database AND/OR performing calculations/projections based on that data. "
         '   - INCLUDES: Point-in-time queries (e.g., "Current balance"). '
         '   - INCLUDES: Trends & comparisons (e.g., "Compare branches"). '
         '   - INCLUDES: **What-if scenarios & Simulations** (e.g., "If interest rates increase by 2%...", "If customers double..."). '
-        '   - Examples: "¿Cuántos clientes tenemos?", "¿Cuál sería el impacto si sube la tasa?", "Proyecta el saldo para el próximo año". '
-        f"   - Available tables: {tables_list} "
+        '   - Examples: '
+        '     "¿Cuál es el saldo total de la cartera del sistema financiero a la última fecha de corte?", '
+        '     "¿Cómo ha evolucionado la cartera de consumo en el último año?", '
+        '     "¿Qué participación tiene cada entidad en el saldo total de cartera del sistema?", '
+        '     "¿Cómo se comparan las tasas de captación entre bancos y compañías de financiamiento?", '
+        '     "¿Qué tan concentrada está la cartera del sistema en las principales entidades?", '
+        '     "Si las tasas de captación aumentan 100 puntos básicos, ¿cuál podría ser el impacto en el volumen captado del sistema?", '
+        '     "Proyecta el saldo total de la cartera del sistema para los próximos 12 meses". '
         ""
         f"2. **{QueryType.GENERAL.value}**: Seeks purely theoretical explanations, definitions of terms, or social conversation WITHOUT requiring specific data calculation. "
         "   - Does NOT require database data. "
@@ -325,7 +331,7 @@ def build_sql_generation_system_prompt(prioritized_tables: list[str] | None = No
     if prioritized_tables:
         priority_hint = f"\n**Priority tables for this query**: {', '.join(prioritized_tables)}\n"
 
-    prompt = f"""You are an expert SQL agent for FinancialDB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
+    prompt = f"""You are an expert SQL agent for SuperSB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
 
 ## Database Schema
 {schema_summary}
@@ -383,10 +389,10 @@ Return JSON:
 }}
 ```
 
-**If the data is NOT available in FinancialDB**, set:
+**If the data is NOT available in SuperDB**, set:
 - `sql`: ""
 - `tablas`: []
-- `error`: "No se puede responder porque [razón]. FinancialDB contiene: [datos disponibles], pero no incluye [lo que falta]."
+- `error`: "No se puede responder porque [razón]. SuperDB contiene: [datos disponibles], pero no incluye [lo que falta]."
 
 Think through your approach, use the tools to verify, then provide the JSON response."""
 
@@ -481,7 +487,7 @@ def build_verification_system_prompt() -> str:
     """Build system prompt for verification agent."""
 
     prompt = (
-        "You are a SQL result verification agent for FinancialDB. Your task is to verify whether a SQL query correctly answers the user's original question. "
+        "You are a SQL result verification agent for SuperDB. Your task is to verify whether a SQL query correctly answers the user's original question. "
         ""
         "# Verification Process "
         ""
@@ -569,6 +575,39 @@ def build_verification_user_input(question: str, sql: str, results: str) -> str:
 # Visualization Agent
 # =============================================================================
 
+def _build_chart_types_section() -> str:
+    """Build chart-types section dynamically from ARCHETYPES using get_chart_type_for_archetype."""
+
+    sections: list[str] = []
+
+    # Group by PatternType
+    for pattern_type in PatternType:
+        archetypes = get_archetypes_by_pattern_type(pattern_type)
+
+        if not archetypes:
+            continue
+
+        # Get pattern letter range (e.g., "A-H" for COMPARACION)
+        letters = [info.archetype.name.replace("ARCHETYPE_", "") for info in archetypes]
+        letter_range = f"{letters[0]}-{letters[-1]}" if len(letters) > 1 else letters[0]
+
+        section_header = f"### {pattern_type.value.title()} Pattern - Chart Types ({letter_range})"
+        sections.append(section_header)
+
+        for info in archetypes:
+            letter = info.archetype.name.replace("ARCHETYPE_", "")
+
+            chart_type = get_chart_type_for_archetype(info.archetype)
+
+            chart_parts = [
+                "",
+                f"**Archetype {letter} - {info.name}** ",
+                f"- Chart Type: {chart_type.value if hasattr(chart_type, 'value') else str(chart_type)} ",
+            ]
+
+            sections.append("".join(chart_parts))
+
+    return "\n".join(sections)
 
 def build_viz_prompt() -> str:
     """Build system prompt for visualization agent."""
