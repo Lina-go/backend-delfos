@@ -32,6 +32,8 @@ from src.services.triage.classifier import TriageClassifier
 from src.services.verification.verifier import ResultVerifier
 from src.services.viz.service import VisualizationService
 from src.config.archetypes import get_chart_type_for_archetype, get_archetype_letter_by_name
+from src.orchestrator.context import ConversationStore
+from src.orchestrator.handlers import GreetingHandler, FollowUpHandler, VizRequestHandler
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ class PipelineOrchestrator:
         """Initialize orchestrator with settings."""
         self.settings = settings
         self.triage = TriageClassifier(settings)
+        self.greeting_handler = GreetingHandler()
+        self.follow_up_handler = FollowUpHandler(settings)
+        self.viz_request_handler = VizRequestHandler(settings)
         self.intent = IntentClassifier(settings)
         self.schema = SchemaService(settings)
         self.sql_gen = SQLGenerator(settings)
@@ -66,12 +71,23 @@ class PipelineOrchestrator:
         except Exception as e:
             logger.error(f"Error closing pipeline resources: {e}", exc_info=True)
 
-    async def _step_triage(self, state: PipelineState, message: str) -> dict[str, Any]:
-        """Execute triage step."""
+    async def _step_triage(
+        self, state: PipelineState, message: str, has_context: bool = False
+    ) -> dict[str, Any]:
+        """Execute triage step with context awareness.
+
+        Args:
+            state: Current pipeline state
+            message: User's natural language question
+            has_context: Whether the user has previous conversation data
+
+        Returns:
+            Triage classification result
+        """
         logger.info(f"{PipelineStep.TRIAGE.value}: {PipelineStepDescription.TRIAGE.value}")
-        triage_prompt = build_triage_system_prompt()
+        triage_prompt = build_triage_system_prompt(has_context=has_context)
         start_time = time.time()
-        triage_result = await self.triage.classify(message)
+        triage_result = await self.triage.classify(message, has_context=has_context)
         execution_time = (time.time() - start_time) * 1000
 
         if not triage_result or "query_type" not in triage_result:
@@ -79,16 +95,10 @@ class PipelineOrchestrator:
                 f"TriageClassifier returned invalid result: {triage_result}. "
                 "Defaulting to data_question."
             )
+            state.query_type = "data_question"
             return {
-                "patron": "NA",
-                "datos": [{"NA": {}}],
-                "arquetipo": "NA",
-                "visualizacion": "NA",
-                "tipo_grafica": "NA",
-                "imagen": "NA",
-                "link_power_bi": "NA",
-                "insight": "",
-                "error": "Error parsing triage result, defaulting to data_question",
+                "query_type": "data_question",
+                "reasoning": "Error parsing triage result, defaulting to data_question",
             }
 
         state.query_type = triage_result["query_type"]
@@ -100,15 +110,6 @@ class PipelineOrchestrator:
             system_prompt=triage_prompt,
             execution_time_ms=execution_time,
         )
-
-        if state.query_type != "data_question":
-            response = self._format_non_data_response(state, triage_result)
-            self.session_logger.end_session(
-                success=True,
-                final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                errors=[],
-            )
-            return response
 
         return triage_result
 
@@ -461,16 +462,66 @@ class PipelineOrchestrator:
             Formatted response dictionary
         """
         state = PipelineState(user_message=message, user_id=user_id)
-        errors = []
+        errors: list[str] = []
 
-        # Start session logging
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
         try:
+            has_context = ConversationStore.has_data(user_id)
+
             # Step 1: TRIAGE
-            triage_result = await self._step_triage(state, message)
-            if state.query_type != "data_question":
-                return triage_result
+            triage_result = await self._step_triage(state, message, has_context)
+
+            # Route based on query_type
+            if state.query_type == "greeting":
+                response = self.greeting_handler.handle(message)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                return response
+
+            elif state.query_type == "follow_up":
+                context = ConversationStore.get(user_id)
+                response = await self.follow_up_handler.handle(message, context)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                return response
+
+            elif state.query_type == "viz_request":
+                context = ConversationStore.get(user_id)
+                response = await self.viz_request_handler.handle(message, user_id, context)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                return response
+
+            elif state.query_type in ("general", "out_of_scope"):
+                response = self._format_non_data_response(state, triage_result)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                return response
+
+            elif state.query_type == "data_question":
+                pass
+
+            else:
+                response = self._format_non_data_response(state, triage_result)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                return response
 
             # Step 2: INTENT
             intent_result = await self._step_intent(state, message)
@@ -509,6 +560,16 @@ class PipelineOrchestrator:
             # Step 9: FORMAT
             final_response = await self._step_format(state)
 
+            # Save context for follow-up questions
+            ConversationStore.update(
+                user_id=user_id,
+                query=message,
+                sql=state.sql_query,
+                results=state.sql_results,
+                response=final_response,
+                chart_type=state.tipo_grafico,
+            )
+
             self.session_logger.end_session(
                 success=True,
                 final_message=json.dumps(final_response, indent=2, ensure_ascii=False),
@@ -527,7 +588,7 @@ class PipelineOrchestrator:
             raise
 
     async def process_stream(
-        self, message: str, user_id: str
+    self, message: str, user_id: str
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process a user message through the complete pipeline with streaming events.
@@ -540,21 +601,75 @@ class PipelineOrchestrator:
             Event dictionaries with step results
         """
         state = PipelineState(user_message=message, user_id=user_id)
-        errors = []
+        errors: list[str] = []
 
-        # Start session logging
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
         try:
+            has_context = ConversationStore.has_data(user_id)
+
             # Step 1: TRIAGE
-            triage_result = await self._step_triage(state, message)
+            triage_result = await self._step_triage(state, message, has_context)
             yield {
                 "step": "triage",
                 "result": triage_result,
                 "state": {"query_type": state.query_type},
             }
-            if state.query_type != "data_question":
-                yield {"step": "complete", "response": triage_result}
+
+            # Route based on query_type
+            if state.query_type == "greeting":
+                response = self.greeting_handler.handle(message)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                yield {"step": "complete", "response": response}
+                return
+
+            elif state.query_type == "follow_up":
+                context = ConversationStore.get(user_id)
+                response = await self.follow_up_handler.handle(message, context)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                yield {"step": "complete", "response": response}
+                return
+
+            elif state.query_type == "viz_request":
+                context = ConversationStore.get(user_id)
+                response = await self.viz_request_handler.handle(message, user_id, context)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                yield {"step": "complete", "response": response}
+                return
+
+            elif state.query_type in ("general", "out_of_scope"):
+                response = self._format_non_data_response(state, triage_result)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                yield {"step": "complete", "response": response}
+                return
+
+            elif state.query_type == "data_question":
+                pass
+
+            else:
+                response = self._format_non_data_response(state, triage_result)
+                self.session_logger.end_session(
+                    success=True,
+                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    errors=[],
+                )
+                yield {"step": "complete", "response": response}
                 return
 
             # Step 2: INTENT
@@ -652,6 +767,16 @@ class PipelineOrchestrator:
                 "result": final_response,
             }
 
+            # Save context for follow-up questions
+            ConversationStore.update(
+                user_id=user_id,
+                query=message,
+                sql=state.sql_query,
+                results=state.sql_results,
+                response=final_response,
+                chart_type=state.tipo_grafico,
+            )
+
             self.session_logger.end_session(
                 success=True,
                 final_message=json.dumps(final_response, indent=2, ensure_ascii=False),
@@ -668,39 +793,6 @@ class PipelineOrchestrator:
                 errors=errors,
             )
             yield {"step": "error", "error": str(e)}
-
-    def _format_non_data_response(
-        self, state: PipelineState, triage_result: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Format response for non-data questions."""
-        query_type = state.query_type
-        reasoning = triage_result.get("reasoning", "This is not a data question.")
-
-        # Special format for out_of_scope queries
-        if query_type == "out_of_scope":
-            return {
-                "patron": "NA",
-                "datos": [{"NA": {}}],
-                "arquetipo": "NA",
-                "visualizacion": "NA",
-                "tipo_grafica": "NA",
-                "imagen": "NA",
-                "link_power_bi": "NA",
-                "insight": "",
-                "error": reasoning,
-            }
-
-        return {
-            "patron": "NA",
-            "datos": [],
-            "arquetipo": "NA",
-            "visualizacion": "NA",
-            "tipo_grafica": "NA",
-            "imagen": "NA",
-            "link_power_bi": "NA",
-            "insight": "",
-            "error": reasoning,
-        }
 
     def _format_non_comparacion_response(
         self, state: PipelineState, intent_result: dict[str, Any]

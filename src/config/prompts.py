@@ -11,26 +11,64 @@ from src.config.database import CONCEPT_TO_TABLES, DATABASE_TABLES, get_all_tabl
 # =============================================================================
 
 
-def build_triage_system_prompt() -> str:
-    """Build system prompt for triage agent."""
+def build_triage_system_prompt(has_context: bool = False) -> str:
+    """Build system prompt for triage agent.
+    
+    Args:
+        has_context: Whether the user has previous conversation data available.
+        
+    Returns:
+        System prompt string for the triage classifier.
+    """
 
-    # Generate valid values from enum
     valid_query_types = ", ".join([f'"{qt.value}"' for qt in QueryType])
 
-    # Get tables from database config
     tables_list = ", ".join(get_all_table_names())
 
+    context_categories = ""
+    if has_context:
+        context_categories = (
+            f"4. **{QueryType.FOLLOW_UP.value}**: Asks about the previous response or results (ONLY when previous context exists). "
+            "   - Questions about WHY something happened or what it means. "
+            '   - Examples: "¿Por qué?", "¿Por qué es tan alta?", "¿A qué se debe?", "Explícame eso", "No entiendo". '
+            ""
+            f"5. **{QueryType.VIZ_REQUEST.value}**: Requests to visualize or change chart type (ONLY when previous data exists). "
+            "   - Asks to graph existing data or change visualization type. "
+            '   - Examples: "Grafícalo", "Muéstrame en gráfico", "Ahora en barras", "Mejor en pie", "En línea de tiempo". '
+            ""
+        )
+
+    context_rules = ""
+    if has_context:
+        context_rules = (
+            f"- If asks 'why?' or requests explanation about previous data -> **{QueryType.FOLLOW_UP.value}** "
+            f"- If asks to graph or change chart type -> **{QueryType.VIZ_REQUEST.value}** "
+        )
+    else:
+        context_rules = (
+            f"- If asks 'why?' but NO previous context exists -> **{QueryType.GENERAL.value}** "
+            f"- If asks to graph but NO previous data exists -> **{QueryType.GENERAL.value}** "
+        )
+
     prompt = (
-        f"Classify a user's question into one of three categories: {valid_query_types}. "
+        f"Classify a user's question into one of the available categories: {valid_query_types}. "
+        ""
+        "## Context "
+        ""
+        f"Previous conversation with data exists: **{'YES' if has_context else 'NO'}** "
         ""
         "## Categories "
         ""
-        f"1. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on SuperDB data. "
+        f"1. **{QueryType.GREETING.value}**: Greetings, farewells, or thank you messages. "
+        "   - Social conversation starters or enders. "
+        '   - Examples: "Hola", "Buenos días", "Gracias", "Muchas gracias", "Chao", "Adiós", "¿Cómo estás?". '
+        ""
+        f"2. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on SuperDB data. "
         "   - Requires querying the database AND/OR performing calculations/projections based on that data. "
         '   - INCLUDES: Point-in-time queries (e.g., "Current balance"). '
         '   - INCLUDES: Trends & comparisons (e.g., "Compare branches"). '
         '   - INCLUDES: **What-if scenarios & Simulations** (e.g., "If interest rates increase by 2%...", "If customers double..."). '
-        '   - Examples: '
+        "   - Examples: "
         '     "¿Cuál es el saldo total de la cartera del sistema financiero a la última fecha de corte?", '
         '     "¿Cómo ha evolucionado la cartera de consumo en el último año?", '
         '     "¿Qué participación tiene cada entidad en el saldo total de cartera del sistema?", '
@@ -39,30 +77,68 @@ def build_triage_system_prompt() -> str:
         '     "Si las tasas de captación aumentan 100 puntos básicos, ¿cuál podría ser el impacto en el volumen captado del sistema?", '
         '     "Proyecta el saldo total de la cartera del sistema para los próximos 12 meses". '
         ""
-        f"2. **{QueryType.GENERAL.value}**: Seeks purely theoretical explanations, definitions of terms, or social conversation WITHOUT requiring specific data calculation. "
+        f"3. **{QueryType.GENERAL.value}**: Seeks purely theoretical explanations, definitions of terms WITHOUT requiring specific data calculation. "
         "   - Does NOT require database data. "
-        '   - Examples: "¿Qué es un préstamo hipotecario?" (Definition), "Explica cómo funciona el interés compuesto" (Explanation), "Hola" (Chat). '
+        '   - Examples: "¿Qué es un préstamo hipotecario?" (Definition), "Explica cómo funciona el interés compuesto" (Explanation). '
         ""
-        f"3. **{QueryType.OUT_OF_SCOPE.value}**: Not related to financial services, banking domain, or system capabilities. "
+        f"{context_categories}"
+        f"6. **{QueryType.OUT_OF_SCOPE.value}**: Not related to financial services, banking domain, or system capabilities. "
         '   - Examples: "¿Qué clima hace?", "Receta de cocina", "Fútbol". '
         ""
         "## Instructions "
         ""
         "1. Analyze the user question for key phrases and intent. "
-        "2. **CRITICAL**: If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts (loans, accounts, customers). If yes, classify as **data_question**. "
-        "3. Eliminate non-fitting categories and choose one. "
-        "4. Return analysis in `<analysis>` tags (max 6 sentences, in Spanish). "
-        "5. Return classification JSON in `<classification>` tags. "
+        "2. **CRITICAL**: Greetings (Hola, Gracias, Chao) should ALWAYS be classified as **greeting**, not general. "
+        f"3. **CRITICAL**: If asking 'why?' or 'explain' AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.FOLLOW_UP.value if has_context else QueryType.GENERAL.value}**. "
+        f"4. **CRITICAL**: If asking to graph/visualize AND previous data exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.VIZ_REQUEST.value if has_context else QueryType.GENERAL.value}**. "
+        "5. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
+        "6. Eliminate non-fitting categories and choose one. "
+        "7. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
+        "8. Return classification JSON in `<classification>` tags. "
+        ""
+        "## Classification Priority "
+        ""
+        f"1. Greetings/farewells/thanks -> **{QueryType.GREETING.value}** "
+        f"{context_rules}"
+        f"- Specific data queries -> **{QueryType.DATA_QUESTION.value}** "
+        f"- Definitions/concepts -> **{QueryType.GENERAL.value}** "
+        f"- Non-financial topics -> **{QueryType.OUT_OF_SCOPE.value}** "
         ""
         "## Output Format "
         ""
         "<analysis> "
-        "[Your reasoning here - why this category fits, max 6 sentences, in Spanish] "
+        "[Your reasoning here - why this category fits, max 4 sentences, in Spanish] "
         "</analysis> "
         "<classification> "
         "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}" | "{QueryType.GENERAL.value}" | "{QueryType.OUT_OF_SCOPE.value}", '
+        f'  "query_type": "{QueryType.GREETING.value}" | "{QueryType.DATA_QUESTION.value}" | "{QueryType.FOLLOW_UP.value}" | "{QueryType.VIZ_REQUEST.value}" | "{QueryType.GENERAL.value}" | "{QueryType.OUT_OF_SCOPE.value}", '
         '  "reasoning": "Brief explanation in Spanish" '
+        "} "
+        "</classification> "
+        ""
+        "## Examples "
+        ""
+        'User: "Hola" '
+        ""
+        "<analysis> "
+        "El usuario envía un saludo simple. No requiere datos ni procesamiento. "
+        "</analysis> "
+        "<classification> "
+        "{ "
+        f'  "query_type": "{QueryType.GREETING.value}", '
+        '  "reasoning": "Saludo social, no requiere consulta de datos." '
+        "} "
+        "</classification> "
+        ""
+        'User: "Si aumentamos los clientes en un 10%, ¿cómo afecta el saldo total?" '
+        ""
+        "<analysis> "
+        "La pregunta plantea un escenario hipotético ('Si aumentamos...') sobre métricas financieras ('clientes', 'saldo total'). Requiere datos base para calcular el impacto. "
+        "</analysis> "
+        "<classification> "
+        "{ "
+        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
+        '  "reasoning": "Requiere datos base de clientes y saldos para proyectar el escenario hipotético." '
         "} "
         "</classification> "
         ""
@@ -79,21 +155,7 @@ def build_triage_system_prompt() -> str:
         "} "
         "</classification> "
         ""
-        f'- If ambiguous (e.g., "Tell me about loans"), prefer {QueryType.DATA_QUESTION.value} '  # if it implies analyzing OUR loans, otherwise General.
-        ""
-        "## Example "
-        ""
-        'User: "Si aumentamos los clientes en un 10%, ¿cómo afecta el saldo total?" '
-        ""
-        "<analysis> "
-        "La pregunta plantea un escenario hipotético ('Si aumentamos...') sobre métricas financieras ('clientes', 'saldo total'). Aunque requiere proyección, se basa en los datos actuales de la base de datos (clientes y saldos actuales) para calcular el impacto. Por lo tanto, es una pregunta de datos avanzada (simulación). "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
-        '  "reasoning": "Requiere datos base de clientes y saldos para proyectar el escenario hipotético." '
-        "} "
-        "</classification> "
+        f"- If ambiguous (e.g., 'Tell me about loans'), prefer {QueryType.DATA_QUESTION.value}. "
     )
     return prompt
 
