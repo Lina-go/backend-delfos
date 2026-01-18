@@ -33,12 +33,21 @@ class VizRequestHandler:
 
         chart_type = self._detect_chart_type(message) or context.last_chart_type or "bar"
 
+        # Get run_id and data_points from context
+        run_id = context.last_run_id
+        data_points = context.last_data_points
+
+        if not run_id or not data_points:
+            return self._error_response(
+                "No hay datos de visualización previos para regenerar el gráfico."
+            )
+
         try:
-            viz_result = await self.graph_service.generate(
-                data=context.last_results,
+            graph_result = await self.graph_service.generate(
+                run_id=run_id,
                 chart_type=chart_type,
-                question=context.last_query or "",
-                user_id=user_id,
+                data_points=data_points,
+                title=context.last_query or "",
             )
 
             return {
@@ -47,8 +56,10 @@ class VizRequestHandler:
                 "arquetipo": "NA",
                 "visualizacion": "SI",
                 "tipo_grafica": chart_type,
-                "imagen": viz_result.get("image_url"),
-                "link_power_bi": viz_result.get("powerbi_url"),
+                "imagen": graph_result.image_url,
+                "html_url": graph_result.html_url,
+                "png_url": graph_result.png_url,
+                "link_power_bi": None,
                 "insight": f"Aquí están los datos en gráfico de {chart_type}.",
             }
 

@@ -1,6 +1,6 @@
 """Conversation context management."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -13,6 +13,8 @@ class ConversationContext:
     last_results: list[dict[str, Any]] | None = None
     last_response: dict[str, Any] | None = None
     last_chart_type: str | None = None
+    last_run_id: str | None = None
+    last_data_points: list[dict[str, Any]] | None = None
 
 
 class ConversationStore:
@@ -42,6 +44,8 @@ class ConversationStore:
         results: list[dict[str, Any]] | None,
         response: dict[str, Any],
         chart_type: str | None = None,
+        run_id: str | None = None,
+        data_points: list[dict[str, Any]] | None = None,
     ) -> None:
         """Update context after a successful data query."""
         ctx = cls.get(user_id)
@@ -50,6 +54,8 @@ class ConversationStore:
         ctx.last_results = results
         ctx.last_response = response
         ctx.last_chart_type = chart_type
+        ctx.last_run_id = run_id
+        ctx.last_data_points = data_points
 
     @classmethod
     def clear(cls, user_id: str) -> None:

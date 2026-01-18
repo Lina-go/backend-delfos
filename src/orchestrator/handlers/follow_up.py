@@ -67,7 +67,7 @@ class FollowUpHandler:
             credential = get_shared_credential()
             async with azure_agent_client(
                 self.settings,
-                self.settings.default_model,
+                self.settings.triage_agent_model,
                 credential,
                 max_iterations=1,
             ) as client:

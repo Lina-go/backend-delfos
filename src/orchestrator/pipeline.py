@@ -568,6 +568,8 @@ class PipelineOrchestrator:
                 results=state.sql_results,
                 response=final_response,
                 chart_type=state.tipo_grafico,
+                run_id=state.run_id,
+                data_points=viz_result.get("data_points") if viz_result else None,
             )
 
             self.session_logger.end_session(
@@ -775,6 +777,8 @@ class PipelineOrchestrator:
                 results=state.sql_results,
                 response=final_response,
                 chart_type=state.tipo_grafico,
+                run_id=state.run_id,
+                data_points=viz_result.get("data_points") if viz_result else None,
             )
 
             self.session_logger.end_session(
