@@ -5,7 +5,7 @@ System prompts for NL2SQL pipeline agents.
 from src.config.archetypes import get_archetypes_by_pattern_type, get_chart_type_for_archetype
 from src.config.constants import Intent, PatternType, QueryType
 from src.config.database import CONCEPT_TO_TABLES, DATABASE_TABLES, get_all_table_names
-
+from typing import Any
 # =============================================================================
 # Triage Agent
 # =============================================================================
@@ -41,8 +41,23 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
     context_rules = ""
     if has_context:
         context_rules = (
-            f"- If asks 'why?' or requests explanation about previous data -> **{QueryType.FOLLOW_UP.value}** "
-            f"- If asks to graph or change chart type -> **{QueryType.VIZ_REQUEST.value}** "
+            ""
+            "**REFINEMENT DETECTION (CRITICAL)**: "
+            "When user wants to FILTER or MODIFY the previous query, classify as **data_question** (NOT follow_up or viz_request). "
+            "These patterns indicate refinement and require NEW SQL: "
+            "- 'solo para X', 'solamente para X', 'únicamente para X' "
+            "- 'ahora para X', 'pero para X', 'y para X', 'y si quiero verla para X' "
+            "- 'filtra por X', 'filtrado por X' "
+            "- 'excluye X', 'sin incluir X', 'quita X', 'menos X' "
+            "- 'y si lo vemos para...', 'qué pasa si filtramos por...' "
+            "- 'ahora muéstrame solo...', 'pero solo de...' "
+            "- 'para el banco X', 'de la entidad X', 'para Bancolombia', 'para Lulo Bank' "
+            "- 'del último mes', 'de este año', 'desde enero', 'del último trimestre' "
+            f"ALL of the above -> **{QueryType.DATA_QUESTION.value}** "
+            ""
+            f"- If asks 'why?' or requests explanation (¿Por qué?, Explícame) -> **{QueryType.FOLLOW_UP.value}** "
+            f"- If asks ONLY to change chart type (en barras, en pie, grafícalo) -> **{QueryType.VIZ_REQUEST.value}** "
+            ""
         )
     else:
         context_rules = (
@@ -68,6 +83,7 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         '   - INCLUDES: Point-in-time queries (e.g., "Current balance"). '
         '   - INCLUDES: Trends & comparisons (e.g., "Compare branches"). '
         '   - INCLUDES: **What-if scenarios & Simulations** (e.g., "If interest rates increase by 2%...", "If customers double..."). '
+        '   - INCLUDES: **Refinements of previous queries** (e.g., "solo para Lulo Bank", "del último trimestre"). '
         "   - Examples: "
         '     "¿Cuál es el saldo total de la cartera del sistema financiero a la última fecha de corte?", '
         '     "¿Cómo ha evolucionado la cartera de consumo en el último año?", '
@@ -91,10 +107,11 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         "2. **CRITICAL**: Greetings (Hola, Gracias, Chao) should ALWAYS be classified as **greeting**, not general. "
         f"3. **CRITICAL**: If asking 'why?' or 'explain' AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.FOLLOW_UP.value if has_context else QueryType.GENERAL.value}**. "
         f"4. **CRITICAL**: If asking to graph/visualize AND previous data exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.VIZ_REQUEST.value if has_context else QueryType.GENERAL.value}**. "
-        "5. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
-        "6. Eliminate non-fitting categories and choose one. "
-        "7. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
-        "8. Return classification JSON in `<classification>` tags. "
+        f"5. **CRITICAL**: If asking to FILTER or MODIFY previous results (solo para X, del último mes, etc.) AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.DATA_QUESTION.value}** (requires new SQL). "
+        "6. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
+        "7. Eliminate non-fitting categories and choose one. "
+        "8. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
+        "9. Return classification JSON in `<classification>` tags. "
         ""
         "## Classification Priority "
         ""
@@ -142,6 +159,30 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         "} "
         "</classification> "
         ""
+        'User: "solo para Lulo Bank" (Previous context: YES) '
+        ""
+        "<analysis> "
+        "El usuario tiene contexto previo y solicita filtrar los resultados para una entidad específica (Lulo Bank). Esto requiere modificar el SQL anterior agregando un filtro WHERE. "
+        "</analysis> "
+        "<classification> "
+        "{ "
+        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
+        '  "reasoning": "Refinamiento de consulta anterior - requiere nuevo SQL con filtro por entidad." '
+        "} "
+        "</classification> "
+        ""
+        'User: "y si lo vemos del último trimestre" (Previous context: YES) '
+        ""
+        "<analysis> "
+        "El usuario quiere modificar la consulta anterior para filtrar por un período de tiempo específico. Requiere nuevo SQL con filtro de fecha. "
+        "</analysis> "
+        "<classification> "
+        "{ "
+        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
+        '  "reasoning": "Refinamiento temporal - requiere nuevo SQL con filtro de fecha." '
+        "} "
+        "</classification> "
+        ""
         "## Edge Cases "
         ""
         "- If no user question is provided: "
@@ -158,7 +199,6 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         f"- If ambiguous (e.g., 'Tell me about loans'), prefer {QueryType.DATA_QUESTION.value}. "
     )
     return prompt
-
 
 # =============================================================================
 # Intent Classification Agent
@@ -460,6 +500,87 @@ Think through your approach, use the tools to verify, then provide the JSON resp
 
     return prompt
 
+def build_sql_refinement_prompt(
+    refinement_context: dict[str, Any],
+    prioritized_tables: list[str] | None = None,
+) -> str:
+    """Build system prompt for SQL refinement (modifying a previous query)."""
+    schema_summary = _build_compact_schema()
+    concept_mapping = _build_compact_concept_mapping()
+
+    priority_hint = ""
+    if prioritized_tables:
+        priority_hint = f"\n**Priority tables**: {', '.join(prioritized_tables)}\n"
+
+    previous_query = refinement_context.get("query", "")
+    previous_sql = refinement_context.get("sql", "")
+    results_count = refinement_context.get("results_count", 0)
+
+    prompt = f"""You are an expert SQL agent for SuperDB. Your task is to MODIFY an existing SQL query based on the user's refinement request.
+
+## REFINEMENT MODE
+
+The user previously asked a question and received results. Now they want to refine/filter those results.
+
+### Previous Context
+**Previous Question**: {previous_query}
+
+**Previous SQL**:
+```sql
+{previous_sql}
+```
+
+**Results returned**: {results_count} rows
+
+### Your Task
+Modify the previous SQL to apply the requested filter. Keep the same SELECT, aggregations, and GROUP BY. Only add/modify WHERE clauses.
+
+## Database Schema
+{schema_summary}
+
+## Business Concepts
+{concept_mapping}
+{priority_hint}
+
+## MCP Tools Available
+- `get_distinct_values(table_name, column_name)` - ALWAYS use this to verify exact entity names before filtering
+- `get_table_schema(table_name)` - Get columns and types
+
+## Common Refinement Patterns
+
+### Filter by Entity
+User: "solo para Bancolombia", "para Lulo Bank"
+Action: Add `WHERE nombreentidad = 'Exact Name From DB'`
+
+### Filter by Date Range  
+User: "del último trimestre", "de 2025"
+Action: Add `WHERE fecha_corte >= 'YYYY-MM-DD'`
+
+### Filter by Category
+User: "solo créditos de consumo"
+Action: Add `WHERE desc_concepto = '...'`
+
+### Exclude Entities
+User: "sin incluir Bancolombia"
+Action: Add `WHERE nombreentidad != '...'`
+
+## Critical Rules
+1. **ALWAYS verify filter values** with get_distinct_values before filtering
+2. **Preserve structure**: Keep SELECT, aggregations, GROUP BY from previous SQL
+3. **Only add filters**: Don't change core logic
+
+## Output Format
+
+<answer>
+{{
+  "sql": "YOUR MODIFIED SQL QUERY",
+  "tablas": ["tables", "used"],
+  "refinement_applied": "Brief description of filter added",
+  "resumen": "One sentence describing what this query returns"
+}}
+</answer>
+"""
+    return prompt
 
 def _build_compact_schema() -> str:
     """Build compact schema representation."""

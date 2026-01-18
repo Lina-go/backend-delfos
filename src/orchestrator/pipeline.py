@@ -177,6 +177,18 @@ class PipelineOrchestrator:
         validation_errors: list[str] | None = None
         previous_sql: str | None = None
 
+        # Check for refinement context
+        refinement_context = None
+        if ConversationStore.has_data(state.user_id):
+            context = ConversationStore.get(state.user_id)
+            if context.last_sql:
+                refinement_context = {
+                    "query": context.last_query,
+                    "sql": context.last_sql,
+                    "results_count": len(context.last_results) if context.last_results else 0,
+                }
+                logger.info(f"SQL generation with refinement context. Previous query: {context.last_query[:50] if context.last_query else 'N/A'}...")
+
         for attempt in range(max_retries):
             prioritized_tables = (
                 state.schema_context.get("tables", []) if state.schema_context else None
@@ -191,6 +203,7 @@ class PipelineOrchestrator:
                 arquetipo=state.arquetipo,
                 previous_errors=validation_errors,
                 previous_sql=previous_sql,
+                refinement_context=refinement_context,
             )
             execution_time = (time.time() - start_time) * 1000
             state.sql_query = sql_result.get("sql")
@@ -202,6 +215,7 @@ class PipelineOrchestrator:
                 "pattern_type": state.pattern_type,
                 "arquetipo": state.arquetipo,
                 "previous_errors": validation_errors,
+                "refinement_context": refinement_context,
             }
             self.session_logger.log_agent_response(
                 agent_name=f"SQLGenerator_attempt_{attempt + 1}",
