@@ -34,6 +34,7 @@ from src.services.viz.service import VisualizationService
 from src.config.archetypes import get_chart_type_for_archetype, get_archetype_letter_by_name
 from src.orchestrator.context import ConversationStore
 from src.orchestrator.handlers import GreetingHandler, FollowUpHandler, VizRequestHandler, GeneralHandler
+from src.services.verification.verification_result import VerificationResult
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +312,7 @@ class PipelineOrchestrator:
         return exec_result
 
     async def _step_verification(self, state: PipelineState, message: str) -> dict[str, Any]:
-        """Execute verification step."""
+        """Execute verification step with detailed feedback."""
         logger.info(
             f"{PipelineStep.VERIFICATION.value}: {PipelineStepDescription.VERIFICATION.value}"
         )
@@ -319,22 +320,137 @@ class PipelineOrchestrator:
             build_verification_system_prompt() if self.settings.use_llm_verification else None
         )
         start_time = time.time()
+        
         results_for_verification: list[dict[str, Any]] = state.sql_results or []
         sql_for_verification: str = state.sql_query or ""
-        state.verification_passed = await self.verifier.verify(
+        
+        # verifier.verify now returns VerificationResult instead of bool
+        verification_result: VerificationResult = await self.verifier.verify(
             results_for_verification, sql_for_verification, message
         )
+        
         execution_time = (time.time() - start_time) * 1000
-        verification_result = {"passed": state.verification_passed}
+        
+        # Store detailed feedback in state for retry logic
+        state.verification_passed = verification_result.passed
+        state.verification_issues = verification_result.issues
+        state.verification_suggestion = verification_result.suggestion
+        state.verification_insight = verification_result.insight
+        
+        result_dict = verification_result.to_dict()
+        
         self.session_logger.log_agent_response(
             agent_name="ResultVerifier",
-            raw_response=json.dumps(verification_result, indent=2, ensure_ascii=False),
-            parsed_response=verification_result,
+            raw_response=json.dumps(result_dict, indent=2, ensure_ascii=False),
+            parsed_response=result_dict,
             input_text=(f"SQL: {state.sql_query}\nResults: {len(state.sql_results or [])} rows"),
             system_prompt=verification_prompt,
             execution_time_ms=execution_time,
         )
-        return verification_result
+        
+        return result_dict
+    
+    async def _step_sql_with_verification_retry(
+        self,
+        state: PipelineState,
+        message: str,
+        max_verification_retries: int = 2,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        Execute SQL generation -> execution -> verification with retry loop.
+        
+        If verification fails (e.g., 0 results), retries SQL generation with feedback.
+        
+        Args:
+            state: Pipeline state
+            message: User's original message
+            max_verification_retries: Max times to retry after verification failure
+            
+        Yields:
+            Step events for streaming
+        """
+        from src.config.prompts import build_sql_retry_user_input
+        
+        verification_attempt = 0
+        
+        while verification_attempt < max_verification_retries:
+            # Build retry context if this is a retry attempt
+            retry_message = message
+            if verification_attempt > 0 and state.verification_issues:
+                retry_message = build_sql_retry_user_input(
+                    original_question=message,
+                    previous_sql=state.sql_query or "",
+                    verification_issues=state.verification_issues,
+                    verification_suggestion=state.verification_suggestion,
+                )
+                logger.info(
+                    f"Verification retry attempt {verification_attempt + 1}/{max_verification_retries}"
+                )
+                
+                # Reset SQL state for retry
+                state.reset_sql_state()
+            
+            # Step 4: SQL GENERATION (with validation retry loop inside)
+            sql_result = await self._step_sql_generation(
+                state, 
+                retry_message if verification_attempt > 0 else message,
+                max_retries=2
+            )
+            yield {
+                "step": "sql_generation",
+                "result": sql_result,
+                "state": {"sql_query": state.sql_query},
+                "verification_attempt": verification_attempt + 1,
+            }
+            
+            if sql_result.get("error"):
+                # SQL generation failed, exit retry loop
+                return
+            
+            # Step 5: SQL EXECUTION
+            exec_result = await self._step_sql_execution(state)
+            yield {
+                "step": "sql_execution",
+                "result": exec_result,
+                "state": {
+                    "total_filas": state.total_filas,
+                    "sql_resumen": state.sql_resumen,
+                },
+                "verification_attempt": verification_attempt + 1,
+            }
+            
+            # Step 6: VERIFICATION
+            verification_result = await self._step_verification(state, message)
+            yield {
+                "step": "verification",
+                "result": verification_result,
+                "state": {
+                    "verification_passed": state.verification_passed,
+                    "verification_issues": state.verification_issues,
+                },
+                "verification_attempt": verification_attempt + 1,
+            }
+            
+            # Check if verification passed
+            if state.verification_passed:
+                logger.info(
+                    f"Verification passed on attempt {verification_attempt + 1}"
+                )
+                return
+            
+            # Verification failed - decide whether to retry
+            verification_attempt += 1
+            
+            if verification_attempt < max_verification_retries:
+                logger.warning(
+                    f"Verification failed (attempt {verification_attempt}/{max_verification_retries}). "
+                    f"Issues: {state.verification_issues}. Retrying..."
+                )
+            else:
+                logger.warning(
+                    f"Verification failed after {max_verification_retries} attempts. "
+                    f"Final issues: {state.verification_issues}"
+                )
 
     async def _step_visualization(
         self, state: PipelineState, message: str
@@ -462,6 +578,8 @@ class PipelineOrchestrator:
         Returns:
             Formatted response dictionary
         """
+        from src.config.prompts import build_sql_retry_user_input
+        
         state = PipelineState(user_message=message, user_id=user_id)
         errors: list[str] = []
 
@@ -532,22 +650,60 @@ class PipelineOrchestrator:
             # Step 3: SCHEMA
             await self._step_schema(state, message)
 
-            # Step 4: SQL_GENERATION (includes validation)
-            sql_result = await self._step_sql_generation(state, message, max_retries=2)
-            if sql_result.get("error"):
-                errors.append(sql_result.get("error", ""))
-                self.session_logger.end_session(
-                    success=False,
-                    final_message=json.dumps(sql_result, indent=2, ensure_ascii=False),
-                    errors=errors,
+            # Steps 4-6: SQL GENERATION + EXECUTION + VERIFICATION with retry
+            max_verification_retries = 2
+            verification_attempt = 0
+            
+            while verification_attempt < max_verification_retries:
+                retry_message = message
+                if verification_attempt > 0 and state.verification_issues:
+                    retry_message = build_sql_retry_user_input(
+                        original_question=message,
+                        previous_sql=state.sql_query or "",
+                        verification_issues=state.verification_issues,
+                        verification_suggestion=state.verification_suggestion,
+                    )
+                    logger.info(
+                        f"Verification retry attempt {verification_attempt + 1}/{max_verification_retries}"
+                    )
+                    state.reset_sql_state()
+                
+                # Step 4: SQL_GENERATION (includes validation)
+                sql_result = await self._step_sql_generation(
+                    state,
+                    retry_message if verification_attempt > 0 else message,
+                    max_retries=2
                 )
-                return sql_result
+                if sql_result.get("error"):
+                    errors.append(sql_result.get("error", ""))
+                    self.session_logger.end_session(
+                        success=False,
+                        final_message=json.dumps(sql_result, indent=2, ensure_ascii=False),
+                        errors=errors,
+                    )
+                    return sql_result
 
-            # Step 5: SQL_EXECUTION
-            await self._step_sql_execution(state)
+                # Step 5: SQL_EXECUTION
+                await self._step_sql_execution(state)
 
-            # Step 6: VERIFICATION
-            await self._step_verification(state, message)
+                # Step 6: VERIFICATION
+                await self._step_verification(state, message)
+
+                if state.verification_passed:
+                    logger.info(f"Verification passed on attempt {verification_attempt + 1}")
+                    break
+                    
+                verification_attempt += 1
+                if verification_attempt < max_verification_retries:
+                    logger.warning(
+                        f"Verification failed (attempt {verification_attempt}/{max_verification_retries}). "
+                        f"Issues: {state.verification_issues}. Retrying..."
+                    )
+                else:
+                    logger.warning(
+                        f"Verification failed after {max_verification_retries} attempts. "
+                        f"Final issues: {state.verification_issues}"
+                    )
 
             # Step 7: VISUALIZATION
             viz_result = await self._step_visualization(state, message)
@@ -590,8 +746,9 @@ class PipelineOrchestrator:
             )
             raise
 
+
     async def process_stream(
-    self, message: str, user_id: str
+        self, message: str, user_id: str
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process a user message through the complete pipeline with streaming events.
@@ -699,41 +856,22 @@ class PipelineOrchestrator:
                 "state": {"selected_tables": state.selected_tables},
             }
 
-            # Step 4: SQL_GENERATION (includes validation)
-            sql_result = await self._step_sql_generation(state, message, max_retries=2)
-            yield {
-                "step": "sql_generation",
-                "result": sql_result,
-                "state": {"sql_query": state.sql_query},
-            }
-            if sql_result.get("error"):
-                errors.append(sql_result.get("error", ""))
-                self.session_logger.end_session(
-                    success=False,
-                    final_message=json.dumps(sql_result, indent=2, ensure_ascii=False),
-                    errors=errors,
-                )
-                yield {"step": "complete", "response": sql_result}
-                return
-
-            # Step 5: SQL_EXECUTION
-            exec_result = await self._step_sql_execution(state)
-            yield {
-                "step": "sql_execution",
-                "result": exec_result,
-                "state": {
-                    "total_filas": state.total_filas,
-                    "sql_resumen": state.sql_resumen,
-                },
-            }
-
-            # Step 6: VERIFICATION
-            verification_result = await self._step_verification(state, message)
-            yield {
-                "step": "verification",
-                "result": verification_result,
-                "state": {"verification_passed": state.verification_passed},
-            }
+            # Steps 4-6: SQL GENERATION + EXECUTION + VERIFICATION with retry
+            async for sql_event in self._step_sql_with_verification_retry(
+                state, message, max_verification_retries=2
+            ):
+                yield sql_event
+                
+                # Check if SQL generation failed
+                if sql_event.get("step") == "sql_generation" and sql_event.get("result", {}).get("error"):
+                    errors.append(sql_event["result"].get("error", ""))
+                    self.session_logger.end_session(
+                        success=False,
+                        final_message=json.dumps(sql_event["result"], indent=2, ensure_ascii=False),
+                        errors=errors,
+                    )
+                    yield {"step": "complete", "response": sql_event["result"]}
+                    return
 
             # Step 7: VISUALIZATION
             viz_result = await self._step_visualization(state, message)
@@ -797,8 +935,7 @@ class PipelineOrchestrator:
                 final_message=f"Pipeline error: {str(e)}",
                 errors=errors,
             )
-            yield {"step": "error", "error": str(e)}
-
+            yield {"step": "error", "error": str(e)}  
 
     def _format_non_data_response(
         self, state: PipelineState, triage_result: dict[str, Any]

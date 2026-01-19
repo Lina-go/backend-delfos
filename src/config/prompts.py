@@ -426,6 +426,10 @@ This is MANDATORY for:
 - User asks about "cuentas de ahorro" → Database stores `'saving'` (not `'Ahorro'`)
 - User asks about "activas" → Database stores `'active'` or `'Active'`
 
+- Only include columns in GROUP BY that are ESSENTIAL to answer the question
+- Read the column descriptions carefully to understand when to use each column
+- For time series spanning months, consider monthly aggregation
+
 **Workflow:**
 1. Identify which columns need filtering
 2. Call `get_distinct_values` for each categorical filter column
@@ -459,13 +463,19 @@ Think through your approach, use the tools to verify, then provide the JSON resp
 
     return prompt
 
-
 def _build_compact_schema() -> str:
-    """Build compact schema representation."""
+    """Build schema representation with column descriptions."""
     lines = []
     for table_name, info in DATABASE_TABLES.items():
-        cols = ", ".join(c.column_name for c in info.table_columns)
-        lines.append(f"**{table_name}**: {cols}")
+        lines.append(f"### {table_name}")
+        lines.append(f"_{info.table_description}_")
+        lines.append("")
+        lines.append("| Column | Type | Description |")
+        lines.append("|--------|------|-------------|")
+        for col in info.table_columns:
+            col_type = col.column_type.value if hasattr(col.column_type, 'value') else str(col.column_type)
+            lines.append(f"| {col.column_name} | {col_type} | {col.column_description} |")
+        lines.append("")
     return "\n".join(lines)
 
 
