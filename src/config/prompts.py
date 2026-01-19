@@ -459,87 +459,6 @@ Think through your approach, use the tools to verify, then provide the JSON resp
 
     return prompt
 
-def build_sql_refinement_prompt(
-    refinement_context: dict[str, Any],
-    prioritized_tables: list[str] | None = None,
-) -> str:
-    """Build system prompt for SQL refinement (modifying a previous query)."""
-    schema_summary = _build_compact_schema()
-    concept_mapping = _build_compact_concept_mapping()
-
-    priority_hint = ""
-    if prioritized_tables:
-        priority_hint = f"\n**Priority tables**: {', '.join(prioritized_tables)}\n"
-
-    previous_query = refinement_context.get("query", "")
-    previous_sql = refinement_context.get("sql", "")
-    results_count = refinement_context.get("results_count", 0)
-
-    prompt = f"""You are an expert SQL agent for SuperDB. Your task is to MODIFY an existing SQL query based on the user's refinement request.
-
-## REFINEMENT MODE
-
-The user previously asked a question and received results. Now they want to refine/filter those results.
-
-### Previous Context
-**Previous Question**: {previous_query}
-
-**Previous SQL**:
-```sql
-{previous_sql}
-```
-
-**Results returned**: {results_count} rows
-
-### Your Task
-Modify the previous SQL to apply the requested filter. Keep the same SELECT, aggregations, and GROUP BY. Only add/modify WHERE clauses.
-
-## Database Schema
-{schema_summary}
-
-## Business Concepts
-{concept_mapping}
-{priority_hint}
-
-## MCP Tools Available
-- `get_distinct_values(table_name, column_name)` - ALWAYS use this to verify exact entity names before filtering
-- `get_table_schema(table_name)` - Get columns and types
-
-## Common Refinement Patterns
-
-### Filter by Entity
-User: "solo para Bancolombia", "para Lulo Bank"
-Action: Add `WHERE nombreentidad = 'Exact Name From DB'`
-
-### Filter by Date Range  
-User: "del último trimestre", "de 2025"
-Action: Add `WHERE fecha_corte >= 'YYYY-MM-DD'`
-
-### Filter by Category
-User: "solo créditos de consumo"
-Action: Add `WHERE desc_concepto = '...'`
-
-### Exclude Entities
-User: "sin incluir Bancolombia"
-Action: Add `WHERE nombreentidad != '...'`
-
-## Critical Rules
-1. **ALWAYS verify filter values** with get_distinct_values before filtering
-2. **Preserve structure**: Keep SELECT, aggregations, GROUP BY from previous SQL
-3. **Only add filters**: Don't change core logic
-
-## Output Format
-
-<answer>
-{{
-  "sql": "YOUR MODIFIED SQL QUERY",
-  "tablas": ["tables", "used"],
-  "refinement_applied": "Brief description of filter added",
-  "resumen": "One sentence describing what this query returns"
-}}
-</answer>
-"""
-    return prompt
 
 def _build_compact_schema() -> str:
     """Build compact schema representation."""
@@ -574,7 +493,6 @@ def _build_compact_concept_mapping() -> str:
 # =============================================================================
 # SQL Generation Retry
 # =============================================================================
-
 
 def build_sql_retry_user_input(
     original_question: str,
@@ -618,7 +536,6 @@ def build_sql_retry_user_input(
     )
 
     return input_text
-
 
 # =============================================================================
 # Verification Agent
