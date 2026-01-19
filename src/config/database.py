@@ -26,115 +26,156 @@ class TableInfo:
 
 
 DATABASE_TABLES: dict[str, TableInfo] = {
+    "dbo.People": TableInfo(
+        table_name="dbo.People",
+        table_description="People table containing personal information",
+        table_columns=[
+            ColumnInfo(
+                column_name="id",
+                column_type=ColumnType.INTEGER,
+                column_description="Person ID (primary key)",
+            ),
+            ColumnInfo(
+                column_name="firstName",
+                column_type=ColumnType.STRING,
+                column_description="First name",
+            ),
+            ColumnInfo(
+                column_name="lastName",
+                column_type=ColumnType.STRING,
+                column_description="Last name",
+            ),
+            ColumnInfo(
+                column_name="DateOfBirth",
+                column_type=ColumnType.DATE,
+                column_description="Date of birth",
+            ),
+            ColumnInfo(
+                column_name="PhoneNumber",
+                column_type=ColumnType.STRING,
+                column_description="Phone number",
+            ),
+            ColumnInfo(
+                column_name="Email",
+                column_type=ColumnType.STRING,
+                column_description="Email address",
+            ),
+            ColumnInfo(
+                column_name="Address",
+                column_type=ColumnType.STRING,
+                column_description="Physical address",
+            ),
+        ],
+    ),
     "dbo.Tasas_Captacion": TableInfo(
         table_name="dbo.Tasas_Captacion",
-        table_description="Tasas de captación reportadas por entidades financieras colombianas a la Superintendencia Financiera. Contiene tasas de interés para CDT, CDAT, cuentas de ahorro y operaciones del mercado monetario.",
+        table_description="Tasas captacion table containing interest rate observations",
         table_columns=[
             ColumnInfo(
                 column_name="TIPOENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Código del tipo de entidad financiera: 1=Bancos Comerciales, 2=Corporaciones Financieras, 4=Compañías de Financiamiento, 22=Bancos de Segundo Piso (Bancoldex, Finagro, Findeter), 32=Cooperativas Financieras. Usar para agrupar por TIPO de entidad, NO por entidad individual.",
+                column_description="Financial entity classification",
             ),
             ColumnInfo(
                 column_name="CODIGOENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Código único de la entidad financiera individual. Usar para identificar o filtrar una entidad específica.",
+                column_description="Unique entity identifier",
             ),
             ColumnInfo(
                 column_name="NOMBREENTIDAD",
                 column_type=ColumnType.STRING,
-                column_description="Nombre de la entidad financiera individual (ej: 'Bancolombia', 'Davivienda', 'BBVA Colombia'). Usar solo cuando la pregunta pide información de un banco específico, NO para agrupar por tipo de entidad.",
+                column_description="Official entity name",
             ),
             ColumnInfo(
                 column_name="FECHACORTE",
                 column_type=ColumnType.DATE,
-                column_description="Fecha de reporte de la tasa (datos diarios). Para evolución temporal, considerar agrupar por mes: DATEPART(YEAR, FECHACORTE), DATEPART(MONTH, FECHACORTE).",
+                column_description="Observation cutoff date",
             ),
             ColumnInfo(
                 column_name="UCA",
                 column_type=ColumnType.INTEGER,
-                column_description="Código de categoría de producto de captación: 1=CDT, 2=CDAT, 3=Operaciones Mercado Monetario, 4=Interbancarios, 5=Repos, 7=Cuentas de Ahorro, 8=Cuentas Corrientes.",
+                column_description="Analytical classification unit for rate category",
             ),
             ColumnInfo(
                 column_name="NOMBRE_UNIDAD_DE_CAPTURA",
                 column_type=ColumnType.STRING,
-                column_description="Descripción del producto de captación (CDT, CDAT, Cuentas de Ahorro, etc.). Usar para filtrar por tipo de producto.",
+                column_description="Description of the UCA rate category",
             ),
             ColumnInfo(
                 column_name="SUBCUENTA",
                 column_type=ColumnType.INTEGER,
-                column_description="Subcategoría del producto (plazo, tipo específico).",
+                column_description="Subaccount code for additional classification",
             ),
             ColumnInfo(
                 column_name="DESCRIPCION",
                 column_type=ColumnType.STRING,
-                column_description="Descripción detallada del plazo o característica (ej: '90 días', '180 días'). NO incluir en GROUP BY a menos que se pida análisis por plazo.",
+                column_description="Description of the reporting concept",
             ),
             ColumnInfo(
                 column_name="TASA",
                 column_type=ColumnType.FLOAT,
-                column_description="Tasa de interés reportada (valor decimal, ej: 0.05 = 5%). Usar AVG(TASA) para promedios.",
+                column_description="Reported interest rate",
             ),
             ColumnInfo(
                 column_name="MONTO",
                 column_type=ColumnType.FLOAT,
-                column_description="Monto en pesos colombianos asociado a la tasa. Usar SUM(MONTO) para totales.",
+                column_description="Associated monetary amount",
             ),
         ],
     ),
     "dbo.Distribucion_Cartera": TableInfo(
         table_name="dbo.Distribucion_Cartera",
-        table_description="Distribución de la cartera de crédito del sistema financiero colombiano. Contiene saldos por tipo de cartera (consumo, comercial, vivienda, microcrédito) reportados a la Superintendencia Financiera.",
+        table_description="Distribucion cartera table containing credit portfolio balances",
         table_columns=[
             ColumnInfo(
                 column_name="TIPO_ENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Código del tipo de entidad financiera: 1=Bancos Comerciales, 2=Corporaciones Financieras, 4=Compañías de Financiamiento, 22=Bancos de Segundo Piso, 32=Cooperativas Financieras. Usar para agrupar por TIPO de entidad, NO por entidad individual.",
+                column_description="Financial entity classification",
             ),
             ColumnInfo(
                 column_name="CODIGO_ENTIDAD",
                 column_type=ColumnType.INTEGER,
-                column_description="Código único de la entidad financiera individual. Usar para identificar o filtrar una entidad específica.",
+                column_description="Unique entity identifier",
             ),
             ColumnInfo(
                 column_name="NOMBREENTIDAD",
                 column_type=ColumnType.STRING,
-                column_description="Nombre de la entidad financiera individual (ej: 'Bancolombia', 'Davivienda'). Usar solo cuando la pregunta pide información de un banco específico, NO para agrupar por tipo de entidad.",
+                column_description="Official entity name",
             ),
             ColumnInfo(
                 column_name="FECHA_CORTE",
                 column_type=ColumnType.DATE,
-                column_description="Fecha de reporte del saldo de cartera. Para evolución temporal, considerar agrupar por mes.",
+                column_description="Portfolio reporting cutoff date",
             ),
             ColumnInfo(
                 column_name="UNICAP",
                 column_type=ColumnType.INTEGER,
-                column_description="Código de categoría de cartera (comercial, consumo, vivienda, microcrédito).",
+                column_description="Credit product classification unit",
             ),
             ColumnInfo(
                 column_name="DESCRIP_UC",
                 column_type=ColumnType.STRING,
-                column_description="Tipo de categoría principal de la cartera: 'CARTERA COMERCIAL...', 'CONSUMO...', 'VIVIENDA...', 'MICROCREDITOS...', 'LIBRANZA', 'TARJETAS DE CREDITO', 'VEHICULO'. Usar para agrupar por tipo de producto de crédito.",
+                column_description="Credit product description",
             ),
             ColumnInfo(
                 column_name="RENGLON",
                 column_type=ColumnType.INTEGER,
-                column_description="Código de subcategoría de cartera.",
+                column_description="Additional portfolio classification",
             ),
             ColumnInfo(
                 column_name="DESC_RENGLON",
                 column_type=ColumnType.STRING,
-                column_description="Subcategoría detallada: 'LIBRE INVERSION', 'TARJETA DE CREDITO TOTAL', 'VEHICULO', 'EMPRESARIAL', 'PYMES', etc. Usar para análisis más granular dentro de una categoría.",
+                column_description="Portfolio classification description",
             ),
             ColumnInfo(
                 column_name="SALDO_CARTERA_A_FECHA_DE_CORTE",
                 column_type=ColumnType.FLOAT,
-                column_description="Saldo total de cartera en pesos colombianos a la fecha de corte. Usar SUM() para agregar.",
+                column_description="Portfolio balance at cutoff date",
             ),
             ColumnInfo(
                 column_name="VIGENTE",
                 column_type=ColumnType.FLOAT,
-                column_description="Saldo de cartera vigente (al día) en pesos colombianos. Usar SUM() para agregar.",
+                column_description="Current portfolio balance",
             ),
         ],
     ),

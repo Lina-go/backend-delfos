@@ -69,14 +69,10 @@ async def run_agent_with_format(
             try:
                 json_data = JSONParser.extract_json(text_result)
 
-                # Check for non-empty dict with actual values (not all None)
-                if json_data and any(v is not None for v in json_data.values()):
+                if json_data:
                     return response_format(**json_data)
                 else:
-                    logger.warning(
-                        "No valid JSON found or JSON is empty/all-null in the response. "
-                        f"Extracted data: {json_data}"
-                    )
+                    logger.warning("No valid JSON found in the response.")
 
             except (ValidationError, ValueError, Exception) as e:
                 logger.error(

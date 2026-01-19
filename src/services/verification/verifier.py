@@ -13,7 +13,6 @@ from src.infrastructure.llm.factory import (
     azure_agent_client,
     get_shared_credential,
 )
-from src.services.verification.verification_result import VerificationResult
 from src.utils.json_parser import JSONParser
 
 logger = logging.getLogger(__name__)
@@ -26,9 +25,7 @@ class ResultVerifier:
         """Initialize result verifier."""
         self.settings = settings
 
-    async def verify(
-        self, results: list[dict[str, Any]], sql: str, question: str = ""
-    ) -> VerificationResult:
+    async def verify(self, results: list[dict[str, Any]], sql: str, question: str = "") -> bool:
         """
         Verify SQL results.
 
@@ -40,67 +37,39 @@ class ResultVerifier:
             question: Original user question (required for LLM verification)
 
         Returns:
-            VerificationResult with passed status and feedback
+            True if results are valid, False otherwise
         """
         if self.settings.use_llm_verification:
             return await self._verify_with_llm(results, sql, question)
         else:
-            return await self._verify_with_code(results, sql)
+            return await self._verify_with_code(results)
 
-    async def _verify_with_code(
-        self, results: list[dict[str, Any]], sql: str
-    ) -> VerificationResult:
+    async def _verify_with_code(self, results: list[dict[str, Any]]) -> bool:
         """Verify results using code-based validation."""
         try:
-            # Basic validation - 0 results
+            # Basic validation
             if not results:
                 logger.warning("No results returned from query")
-                return VerificationResult(
-                    passed=False,
-                    issues=["Query returned 0 rows - check filter values and table/column names"],
-                    suggestion=(
-                        "The query returned no results. Consider: "
-                        "1) Check if filter values match actual data (use SELECT DISTINCT to explore), "
-                        "2) Verify column names are correct, "
-                        "3) Check if date ranges include available data"
-                    ),
-                    summary="La consulta no devolvió resultados",
-                )
+                return False
 
             # Check for reasonable number of results
             if len(results) > 10000:
                 logger.warning(f"Very large result set: {len(results)} rows")
-                return VerificationResult(
-                    passed=False,
-                    issues=[f"Result set too large: {len(results)} rows"],
-                    suggestion="Add more specific filters or use TOP/LIMIT to restrict results",
-                    summary=f"Conjunto de resultados muy grande: {len(results)} filas",
-                )
+                return False
 
-            return VerificationResult(
-                passed=True,
-                issues=[],
-                suggestion=None,
-                insight=f"Query returned {len(results)} rows",
-                summary=f"Verificación exitosa: {len(results)} filas",
-            )
+            return True
 
         except Exception as e:
             logger.error(f"Verification error: {e}", exc_info=True)
-            return VerificationResult(
-                passed=False,
-                issues=[f"Verification error: {str(e)}"],
-                suggestion=None,
-                summary=f"Error de verificación: {str(e)}",
-            )
+            return False
 
     async def _verify_with_llm(
         self, results: list[dict[str, Any]], sql: str, question: str
-    ) -> VerificationResult:
+    ) -> bool:
         """Verify results using LLM agent."""
         try:
             # Format results as string
-            results_str = str(results) if results else "No results (0 rows)"
+            results_str = str(results) if results else "No results"
 
             # Build input
             user_input = build_verification_user_input(question, sql, results_str)
@@ -109,6 +78,7 @@ class ResultVerifier:
 
             # Create agent
             credential = get_shared_credential()
+            # ResultVerifier doesn't use tools, only needs 1-2 iterations
             async with azure_agent_client(
                 self.settings, model, credential, max_iterations=2
             ) as client:
@@ -123,23 +93,14 @@ class ResultVerifier:
             # Parse response
             result = JSONParser.extract_json(response)
             is_valid = bool(result.get("is_valid", False))
-            issues = result.get("issues", [])
-            suggestion = result.get("suggestion")
-            insight = result.get("insight")
-            summary = result.get("summary")
 
             if not is_valid:
-                logger.warning(f"LLM Verification failed: {issues}")
+                issues = result.get("issues", [])
+                logger.warning(f"Verification failed: {issues}")
 
-            return VerificationResult(
-                passed=is_valid,
-                issues=issues if isinstance(issues, list) else [str(issues)],
-                suggestion=suggestion,
-                insight=insight,
-                summary=summary,
-            )
+            return is_valid
 
         except Exception as e:
             logger.error(f"LLM verification error: {e}", exc_info=True)
             # Fallback to code-based verification on error
-            return await self._verify_with_code(results, sql)
+            return await self._verify_with_code(results)

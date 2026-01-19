@@ -23,22 +23,23 @@ class TriageClassifier:
         """Initialize triage classifier."""
         self.settings = settings
 
-    async def classify(self, message: str, has_context: bool = False) -> dict[str, Any]:
+    async def classify(self, message: str) -> dict[str, Any]:
         """
         Classify a user message.
 
         Args:
             message: User's natural language question
-            has_context: Whether the user has previous conversation data
 
         Returns:
             Dictionary with query_type, confidence, and reasoning
         """
         try:
-            system_prompt = build_triage_system_prompt(has_context=has_context)
+            system_prompt = build_triage_system_prompt()
             model = self.settings.triage_agent_model
 
+            # Create agent with MCP tools to verify database structure
             credential = get_shared_credential()
+            # TriageClassifier uses MCP tools to explore schema, needs a few iterations
             async with (
                 azure_agent_client(self.settings, model, credential, max_iterations=5) as client,
                 mcp_connection(self.settings) as mcp,
@@ -57,6 +58,7 @@ class TriageClassifier:
 
         except Exception as e:
             logger.error(f"Triage classification error: {e}", exc_info=True)
+            # Default to data_question on error
             return {
                 "query_type": "data_question",
                 "reasoning": "Error in classification, defaulting to data_question",

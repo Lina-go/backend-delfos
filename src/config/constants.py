@@ -11,9 +11,6 @@ class QueryType(str, Enum):
     DATA_QUESTION = "data_question"  # Proceed to the rest of pipeline
     GENERAL = "general"  # Reject the question: Not about data
     OUT_OF_SCOPE = "out_of_scope"  # Reject the question: Not in the DB
-    GREETING = "greeting" # Say/ Respond greeting
-    FOLLOW_UP = "follow_up" # Handle follow-up question
-    VIZ_REQUEST = "viz_request" # Handle visualization request
 
 
 class Intent(str, Enum):

@@ -26,16 +26,13 @@ class PipelineState:
 
     # Step 4-5: SQL
     sql_query: str | None = None
-    sql_results: list[Any] | None = None
+    sql_results: list[Any] | None = None  # Can be List[str] from MCP or List[Dict] after parsing
     total_filas: int = 0
     sql_resumen: str | None = None
     sql_insights: str | None = None
 
-    # Step 6: Verification (with detailed feedback for retry)
+    # Step 6: Verification
     verification_passed: bool = False
-    verification_issues: list[str] = field(default_factory=list)
-    verification_suggestion: str | None = None
-    verification_insight: str | None = None
 
     # Step 7: Visualization
     viz_required: bool = False
@@ -48,15 +45,3 @@ class PipelineState:
 
     # Step 8: Final response
     final_response: dict[str, Any] | None = None
-
-    def reset_sql_state(self) -> None:
-        """Reset SQL-related state for retry attempts."""
-        self.sql_query = None
-        self.sql_results = None
-        self.total_filas = 0
-        self.sql_resumen = None
-        self.sql_insights = None
-        self.verification_passed = False
-        self.verification_issues = []
-        self.verification_suggestion = None
-        self.verification_insight = None

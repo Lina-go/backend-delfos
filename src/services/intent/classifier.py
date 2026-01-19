@@ -74,12 +74,10 @@ class IntentClassifier:
 
         except Exception as e:
             logger.error(f"Intent classification error: {e}", exc_info=True)
-            # Return a valid fallback using archetype "A" (nivel_puntual) as default
-            # This prevents downstream errors when converting arquetipo to Archetype enum
             return {
                 "user_question": message,
-                "intent": "nivel_puntual",
-                "tipo_patron": "Comparación",
-                "arquetipo": "A",
+                "intent": "error",
+                "tipo_patron": "error",
+                "arquetipo": "error",
                 "razon": f"Error in classification: {str(e)}",
             }

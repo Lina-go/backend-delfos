@@ -266,17 +266,10 @@ def get_archetype_name(archetype_letter: str) -> str:
     Args:
         archetype_letter: str (e.g., "N")
     Returns:
-        str: Archetype name. Falls back to "nivel_puntual" (archetype A) for invalid input.
+        str: Archetype name
     """
-    try:
-        archetype_enum = Archetype(archetype_letter)
-        return ARCHETYPES[archetype_enum].name
-    except ValueError:
-        # Invalid archetype letter - fall back to archetype A (nivel_puntual)
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Invalid archetype letter '{archetype_letter}', defaulting to 'A' (nivel_puntual)")
-        return ARCHETYPES[Archetype.ARCHETYPE_A].name
+    archetype_enum = Archetype(archetype_letter)
+    return ARCHETYPES[archetype_enum].name
 
 def get_chart_type_for_archetype(archetype: Archetype) -> ChartType | None:
     """Get default chart type for an archetype.

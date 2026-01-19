@@ -37,19 +37,34 @@ class SQLExecutor:
     async def execute(self, sql: str) -> dict[str, Any]:
         """
         Execute SQL query directly via MCP and format results using an LLM agent.
+
+        Note: Validation should be done before calling this method.
+        This method:
+        1. Executes the SQL query directly via MCPClient (guaranteed once)
+        2. Uses an LLM agent (without MCP tools) to format the raw results
+
+        Args:
+            sql: SQL query string (should be pre-validated)
+
+        Returns:
+            Dictionary with results and metadata:
+            {
+                "resultados": [{"column_name": value, ...}, ...],
+                "total_filas": int,
+                "resumen": str
+            }
         """
-        # Max size for raw results to send to LLM (500KB to be safe under 1MB API limit)
-        MAX_RESULT_SIZE = 100000
-        
         try:
             # Step 1: Execute SQL query directly via MCP with retry logic
             logger.info("Executing SQL query directly via MCP")
 
             async def _execute_safe() -> dict[str, Any]:
                 """Execute SQL once via MCP, raising on connection timeouts."""
+                # Create a new MCP connection for each attempt to reset state
                 async with MCPClient(self.settings) as mcp_client:
                     result = await mcp_client.execute_sql(sql)
 
+                # If result contains a timeout error, raise exception to trigger retry
                 error_msg = str(result.get("error") or "").lower()
                 if "login timeout" in error_msg or "timeout expired" in error_msg:
                     raise Exception(f"SQL Connection Timeout: {result['error']}")
@@ -57,6 +72,7 @@ class SQLExecutor:
                 return result
 
             try:
+                # Execute with retries (initial_delay=2.0 allows DB to wake up if paused)
                 execution_result = await run_with_retry(
                     _execute_safe, max_retries=3, initial_delay=2.0, backoff_factor=2.0
                 )
@@ -83,46 +99,32 @@ class SQLExecutor:
 
             logger.info(f"SQL executed successfully: {row_count} rows returned")
 
-            # TRUNCATE raw results if too large for LLM API
-            results_truncated = False
-            if len(raw_results) > MAX_RESULT_SIZE:
-                original_size = len(raw_results)
-                raw_results = raw_results[:MAX_RESULT_SIZE] + "\n... [TRUNCATED]"
-                results_truncated = True
-                logger.warning(
-                    f"Results truncated from {original_size:,} to {MAX_RESULT_SIZE:,} chars "
-                    f"({row_count} rows total)"
-                )
-
-            # Step 2: Format results using LLM agent (NO MCP tools)
+            # Step 2: Format results using LLM agent (NO MCP tools - prevents infinite loops)
             system_prompt = build_sql_formatting_system_prompt()
             model = self.settings.sql_executor_agent_model
             executor_max_tokens = self.settings.sql_executor_max_tokens
             executor_temperature = self.settings.sql_executor_temperature
 
-            truncation_note = (
-                f"\n\nNOTE: Results were truncated for processing. "
-                f"Showing partial data from {row_count} total rows."
-                if results_truncated else ""
-            )
-            
+            # Create user message with SQL query and raw results
             user_message = (
                 f"Format the following SQL query results as dictionaries:\n\n"
                 f"SQL Query:\n{sql}\n\n"
                 f"Raw Results (newline-separated):\n{raw_results}\n\n"
-                f"Number of rows: {row_count}{truncation_note}"
+                f"Number of rows: {row_count}"
             )
 
             logger.info(f"Formatting results via agent with model: {model} (no tools)")
 
             credential = get_shared_credential()
+            # SQLFormatter doesn't use tools, so only needs 1-2 iterations
             async with azure_agent_client(
                 self.settings, model, credential, max_iterations=2
             ) as client:
+                # No MCP tools - agent only formats, cannot execute queries
                 agent = client.create_agent(
                     name="SQLFormatter",
                     instructions=system_prompt,
-                    tools=None,
+                    tools=None,  # No tools = no infinite loops
                     max_tokens=executor_max_tokens,
                     temperature=executor_temperature,
                 )
@@ -133,6 +135,7 @@ class SQLExecutor:
             if isinstance(result_model, SQLExecutionResult):
                 return result_model.model_dump()
 
+            # If the formatter returned raw text instead of a model, log and return a safe fallback.
             logger.error("SQL formatter returned unexpected raw text instead of SQLExecutionResult")
             return {
                 "resultados": [],
