@@ -392,7 +392,7 @@ def build_sql_generation_system_prompt(prioritized_tables: list[str] | None = No
     if prioritized_tables:
         priority_hint = f"\n**Priority tables for this query**: {', '.join(prioritized_tables)}\n"
 
-    prompt = f"""You are an expert SQL agent for SuperSB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
+    prompt = f"""You are an expert SQL agent for SuperDB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
 
 ## Database Schema
 {schema_summary}
