@@ -7,6 +7,7 @@ import logging
 import re
 from collections.abc import Callable
 from typing import Any, TypeVar
+import pyodbc
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,6 @@ def is_pyodbc_timeout_error(exception: Exception) -> bool:
         True if the exception is a pyodbc HYT00 timeout error
     """
     try:
-        import pyodbc
 
         if isinstance(exception, pyodbc.Error):
             error_str = str(exception)

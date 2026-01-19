@@ -114,7 +114,7 @@ DATABASE_TABLES: dict[str, TableInfo] = {
             ColumnInfo(
                 column_name="DESCRIP_UC",
                 column_type=ColumnType.STRING,
-                column_description="Categoría principal de cartera: 'CARTERA COMERCIAL...', 'CONSUMO...', 'VIVIENDA...', 'MICROCREDITOS...', 'LIBRANZA', 'TARJETAS DE CREDITO', 'VEHICULO'. Usar para agrupar por tipo de producto de crédito.",
+                column_description="Tipo de categoría principal de la cartera: 'CARTERA COMERCIAL...', 'CONSUMO...', 'VIVIENDA...', 'MICROCREDITOS...', 'LIBRANZA', 'TARJETAS DE CREDITO', 'VEHICULO'. Usar para agrupar por tipo de producto de crédito.",
             ),
             ColumnInfo(
                 column_name="RENGLON",
