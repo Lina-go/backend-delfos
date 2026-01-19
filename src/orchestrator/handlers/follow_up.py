@@ -27,7 +27,7 @@ class FollowUpHandler:
 
         return {
             "patron": "follow_up",
-            "datos": context.last_results[:5] if context.last_results else [],
+            "datos": [],
             "arquetipo": "NA",
             "visualizacion": "NO",
             "tipo_grafica": context.last_chart_type,
