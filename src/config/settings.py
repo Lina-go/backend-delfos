@@ -131,6 +131,9 @@ class Settings(BaseSettings):
     # Global response timeout
     response_timeout: int = 120
 
+    # LLM concurrency limit
+    llm_max_concurrent_requests: int = 2
+
     # Steps timeout
     triage_timeout: float = 5.0
     intent_timeout: float = 5.0

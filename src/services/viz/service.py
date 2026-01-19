@@ -31,6 +31,7 @@ class VisualizationService:
         sql_query: str | None = "",
         tablas: list[str] | None = None,
         resumen: str | None = "",
+        chart_type: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate visualization for SQL results.
@@ -47,6 +48,7 @@ class VisualizationService:
                     "resumen": resumen or "",
                 },
                 "original_question": question,
+                "tipo_grafico": chart_type,
             }
 
             input_str = json.dumps(viz_input, ensure_ascii=False)

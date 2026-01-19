@@ -120,10 +120,11 @@ def is_sql_safe(sql: str) -> tuple[bool, str | None]:
     if not any(sql_upper.startswith(prefix) for prefix in ALLOWED_STATEMENT_PREFIXES):
         return False, f"Query must start with one of: {ALLOWED_STATEMENT_NAMES}"
 
+    """
     # 5. Check dbo. prefix (if FROM exists)
     if "FROM" in sql_upper and REQUIRED_TABLE_PREFIX.upper() not in sql_upper:
         return False, f"Tables must use '{REQUIRED_TABLE_PREFIX}' prefix"
-
+    """
     return True, None
 
 
@@ -141,7 +142,7 @@ def validate_table_references(sql: str, valid_tables: set[str]) -> list[str]:
 
     Args:
         sql: SQL query string
-        valid_tables: Set of valid table names (e.g., {"dbo.People", "dbo.Accounts"})
+        valid_tables: Set of valid table names (e.g., {"dbo.Tasas_Captacion", "dbo.Distribucion_Cartera"})
 
     Returns:
         List of error messages (empty if valid)

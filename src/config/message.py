@@ -10,12 +10,12 @@ from src.config.constants import QueryType
 
 REJECTION_MESSAGES: dict[QueryType, str] = {
     QueryType.GENERAL: (
-        "Solo puedo responder preguntas sobre los datos de SuperDB. "
-        "¿Tienes alguna pregunta sobre cuentas, clientes, préstamos o transacciones?"
+        "Solo puedo responder preguntas sobre los datos públicos de tasas de captación y distribución de cartera disponibles en la Superintendencia Financiera. "
+        "Tienes alguna pregunta sobre tasas de captacion, distribucion de cartera o personas?"
     ),
     QueryType.OUT_OF_SCOPE: (
-        "No tengo acceso a esa información. "
-        "Puedo ayudarte con datos que no esten en la SUperintendencia Financiera sobre saldos por entidad, participación de mercado o tasas de interes en la captación."
+        "No tengo acceso a esa informacion. "
+        "Puedo ayudar con tasas de captacion y distribucion de cartera."
     ),
 }
 

@@ -5,32 +5,70 @@ System prompts for NL2SQL pipeline agents.
 from src.config.archetypes import get_archetypes_by_pattern_type, get_chart_type_for_archetype
 from src.config.constants import Intent, PatternType, QueryType
 from src.config.database import CONCEPT_TO_TABLES, DATABASE_TABLES, get_all_table_names
-
+from typing import Any
 # =============================================================================
 # Triage Agent
 # =============================================================================
 
 
-def build_triage_system_prompt() -> str:
-    """Build system prompt for triage agent."""
+def build_triage_system_prompt(has_context: bool = False) -> str:
+    """Build system prompt for triage agent.
+    
+    Args:
+        has_context: Whether the user has previous conversation data available.
+        
+    Returns:
+        System prompt string for the triage classifier.
+    """
 
-    # Generate valid values from enum
     valid_query_types = ", ".join([f'"{qt.value}"' for qt in QueryType])
 
-    # Get tables from database config
     tables_list = ", ".join(get_all_table_names())
 
+    context_categories = ""
+    if has_context:
+        context_categories = (
+            f"4. **{QueryType.FOLLOW_UP.value}**: Asks about the previous response or results (ONLY when previous context exists). "
+            "   - Questions about WHY something happened or what it means. "
+            '   - Examples: "¿Por qué?", "¿Por qué es tan alta?", "¿A qué se debe?", "Explícame eso", "No entiendo". '
+            ""
+            f"5. **{QueryType.VIZ_REQUEST.value}**: Requests to visualize or change chart type (ONLY when previous data exists). "
+            "   - Asks to graph existing data or change visualization type. "
+            '   - Examples: "Grafícalo", "Muéstrame en gráfico", "Ahora en barras", "Mejor en pie", "En línea de tiempo". '
+            ""
+        )
+
+    context_rules = ""
+    if has_context:
+        context_rules = (
+            f"- If asks 'why?' or requests explanation about previous data -> **{QueryType.FOLLOW_UP.value}** "
+            f"- If asks to graph or change chart type -> **{QueryType.VIZ_REQUEST.value}** "
+        )
+    else:
+        context_rules = (
+            f"- If asks 'why?' but NO previous context exists -> **{QueryType.GENERAL.value}** "
+            f"- If asks to graph but NO previous data exists -> **{QueryType.GENERAL.value}** "
+        )
+
     prompt = (
-        f"Classify a user's question into one of three categories: {valid_query_types}. "
+        f"Classify a user's question into one of the available categories: {valid_query_types}. "
+        ""
+        "## Context "
+        ""
+        f"Previous conversation with data exists: **{'YES' if has_context else 'NO'}** "
         ""
         "## Categories "
         ""
-        f"1. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on SuperDB data. "
+        f"1. **{QueryType.GREETING.value}**: Greetings, farewells, or thank you messages. "
+        "   - Social conversation starters or enders. "
+        '   - Examples: "Hola", "Buenos días", "Gracias", "Muchas gracias", "Chao", "Adiós", "¿Cómo estás?". '
+        ""
+        f"2. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on SuperDB data. "
         "   - Requires querying the database AND/OR performing calculations/projections based on that data. "
         '   - INCLUDES: Point-in-time queries (e.g., "Current balance"). '
         '   - INCLUDES: Trends & comparisons (e.g., "Compare branches"). '
         '   - INCLUDES: **What-if scenarios & Simulations** (e.g., "If interest rates increase by 2%...", "If customers double..."). '
-        '   - Examples: '
+        "   - Examples: "
         '     "¿Cuál es el saldo total de la cartera del sistema financiero a la última fecha de corte?", '
         '     "¿Cómo ha evolucionado la cartera de consumo en el último año?", '
         '     "¿Qué participación tiene cada entidad en el saldo total de cartera del sistema?", '
@@ -39,30 +77,68 @@ def build_triage_system_prompt() -> str:
         '     "Si las tasas de captación aumentan 100 puntos básicos, ¿cuál podría ser el impacto en el volumen captado del sistema?", '
         '     "Proyecta el saldo total de la cartera del sistema para los próximos 12 meses". '
         ""
-        f"2. **{QueryType.GENERAL.value}**: Seeks purely theoretical explanations, definitions of terms, or social conversation WITHOUT requiring specific data calculation. "
+        f"3. **{QueryType.GENERAL.value}**: Seeks purely theoretical explanations, definitions of terms WITHOUT requiring specific data calculation. "
         "   - Does NOT require database data. "
-        '   - Examples: "¿Qué es un préstamo hipotecario?" (Definition), "Explica cómo funciona el interés compuesto" (Explanation), "Hola" (Chat). '
+        '   - Examples: "¿Qué es un préstamo hipotecario?" (Definition), "Explica cómo funciona el interés compuesto" (Explanation). '
         ""
-        f"3. **{QueryType.OUT_OF_SCOPE.value}**: Not related to financial services, banking domain, or system capabilities. "
+        f"{context_categories}"
+        f"6. **{QueryType.OUT_OF_SCOPE.value}**: Not related to financial services, banking domain, or system capabilities. "
         '   - Examples: "¿Qué clima hace?", "Receta de cocina", "Fútbol". '
         ""
         "## Instructions "
         ""
         "1. Analyze the user question for key phrases and intent. "
-        "2. **CRITICAL**: If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts (loans, accounts, customers). If yes, classify as **data_question**. "
-        "3. Eliminate non-fitting categories and choose one. "
-        "4. Return analysis in `<analysis>` tags (max 6 sentences, in Spanish). "
-        "5. Return classification JSON in `<classification>` tags. "
+        "2. **CRITICAL**: Greetings (Hola, Gracias, Chao) should ALWAYS be classified as **greeting**, not general. "
+        f"3. **CRITICAL**: If asking 'why?' or 'explain' AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.FOLLOW_UP.value if has_context else QueryType.GENERAL.value}**. "
+        f"4. **CRITICAL**: If asking to graph/visualize AND previous data exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.VIZ_REQUEST.value if has_context else QueryType.GENERAL.value}**. "
+        "5. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
+        "6. Eliminate non-fitting categories and choose one. "
+        "7. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
+        "8. Return classification JSON in `<classification>` tags. "
+        ""
+        "## Classification Priority "
+        ""
+        f"1. Greetings/farewells/thanks -> **{QueryType.GREETING.value}** "
+        f"{context_rules}"
+        f"- Specific data queries -> **{QueryType.DATA_QUESTION.value}** "
+        f"- Definitions/concepts -> **{QueryType.GENERAL.value}** "
+        f"- Non-financial topics -> **{QueryType.OUT_OF_SCOPE.value}** "
         ""
         "## Output Format "
         ""
         "<analysis> "
-        "[Your reasoning here - why this category fits, max 6 sentences, in Spanish] "
+        "[Your reasoning here - why this category fits, max 4 sentences, in Spanish] "
         "</analysis> "
         "<classification> "
         "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}" | "{QueryType.GENERAL.value}" | "{QueryType.OUT_OF_SCOPE.value}", '
+        f'  "query_type": "{QueryType.GREETING.value}" | "{QueryType.DATA_QUESTION.value}" | "{QueryType.FOLLOW_UP.value}" | "{QueryType.VIZ_REQUEST.value}" | "{QueryType.GENERAL.value}" | "{QueryType.OUT_OF_SCOPE.value}", '
         '  "reasoning": "Brief explanation in Spanish" '
+        "} "
+        "</classification> "
+        ""
+        "## Examples "
+        ""
+        'User: "Hola" '
+        ""
+        "<analysis> "
+        "El usuario envía un saludo simple. No requiere datos ni procesamiento. "
+        "</analysis> "
+        "<classification> "
+        "{ "
+        f'  "query_type": "{QueryType.GREETING.value}", '
+        '  "reasoning": "Saludo social, no requiere consulta de datos." '
+        "} "
+        "</classification> "
+        ""
+        'User: "Si aumentamos los clientes en un 10%, ¿cómo afecta el saldo total?" '
+        ""
+        "<analysis> "
+        "La pregunta plantea un escenario hipotético ('Si aumentamos...') sobre métricas financieras ('clientes', 'saldo total'). Requiere datos base para calcular el impacto. "
+        "</analysis> "
+        "<classification> "
+        "{ "
+        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
+        '  "reasoning": "Requiere datos base de clientes y saldos para proyectar el escenario hipotético." '
         "} "
         "</classification> "
         ""
@@ -79,24 +155,9 @@ def build_triage_system_prompt() -> str:
         "} "
         "</classification> "
         ""
-        f'- If ambiguous (e.g., "Tell me about loans"), prefer {QueryType.DATA_QUESTION.value} '  # if it implies analyzing OUR loans, otherwise General.
-        ""
-        "## Example "
-        ""
-        'User: "Si aumentamos los clientes en un 10%, ¿cómo afecta el saldo total?" '
-        ""
-        "<analysis> "
-        "La pregunta plantea un escenario hipotético ('Si aumentamos...') sobre métricas financieras ('clientes', 'saldo total'). Aunque requiere proyección, se basa en los datos actuales de la base de datos (clientes y saldos actuales) para calcular el impacto. Por lo tanto, es una pregunta de datos avanzada (simulación). "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
-        '  "reasoning": "Requiere datos base de clientes y saldos para proyectar el escenario hipotético." '
-        "} "
-        "</classification> "
+        f"- If ambiguous (e.g., 'Tell me about loans'), prefer {QueryType.DATA_QUESTION.value}. "
     )
     return prompt
-
 
 # =============================================================================
 # Intent Classification Agent
@@ -326,31 +387,62 @@ def build_sql_generation_system_prompt(prioritized_tables: list[str] | None = No
 
     schema_summary = _build_compact_schema()
     concept_mapping = _build_compact_concept_mapping()
+    available_tables = ", ".join(get_all_table_names())
 
     priority_hint = ""
     if prioritized_tables:
         priority_hint = f"\n**Priority tables for this query**: {', '.join(prioritized_tables)}\n"
 
-    prompt = f"""You are an expert SQL agent for SuperSB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
+    prompt = f"""You are an expert SQL agent for SuperDB, a financial services database. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
 
 ## Database Schema
 {schema_summary}
 
-## Business Concepts → Tables
-{concept_mapping}
-{priority_hint}
-## MCP Tools Available
-Use these tools to explore the database before writing SQL:
-- `list_tables` - List all tables
-- `get_table_schema(table_name)` - Get columns and types for a table
-- `get_table_relationships` - Foreign key relationships
-- `get_distinct_values(table_name, column_name)` - **CRITICAL: Use this for ANY filtered column**
-- `get_primary_keys(table_name)` - Primary key columns
+    ## Business Concepts → Tables
+    {concept_mapping}
+    {priority_hint}
+    ## MCP Tools Available
+    Use these tools to explore the database before writing SQL:
+    - `list_tables` - List all tables
+    - `get_table_schema(table_name)` - Get columns and types for a table
+    - `get_table_relationships` - Foreign key relationships
+    - `get_distinct_values(table_name, column_name)` - **CRITICAL: Use this for ANY filtered column**
+    - `get_primary_keys(table_name)` - Primary key columns
+    ## SQL Rules
+    1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
+    2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
+    3. **Use JOINs** based on foreign key relationships when combining tables
+    ## Database Schema
+    {schema_summary}
 
-## SQL Rules
-1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
-2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
-3. **Use JOINs** based on foreign key relationships when combining tables
+    ## Business Concepts → Tables
+    {concept_mapping}
+    {priority_hint}
+    ## MCP Tools Available
+    Use these tools to explore the database before writing SQL:
+    - `list_tables` - List all tables
+    - `get_table_schema(table_name)` - Get columns and types for a table
+    - `get_table_relationships` - Foreign key relationships
+    - `get_distinct_values(table_name, column_name)` - **CRITICAL: Use this for ANY filtered column**
+    - `get_primary_keys(table_name)` - Primary key columns
+    ## SQL Rules
+    1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
+    2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
+    3. **Use JOINs** based on foreign key relationships when combining tables
+    ## Business Concepts → Tables
+    {concept_mapping}
+    {priority_hint}
+    ## MCP Tools Available
+    Use these tools to explore the database before writing SQL:
+    - `list_tables` - List all tables
+    - `get_table_schema(table_name)` - Get columns and types for a table
+    - `get_table_relationships` - Foreign key relationships
+    - `get_distinct_values(table_name, column_name)` - **CRITICAL: Use this for ANY filtered column**
+    - `get_primary_keys(table_name)` - Primary key columns
+    ## SQL Rules
+    1. **SELECT only** - Never UPDATE, DELETE, DROP, ALTER
+    2. **Always use `dbo.` prefix** - Write `dbo.Customers`, not `Customers`
+    3. **Use JOINs** based on foreign key relationships when combining tables
 
 ## CRITICAL: Verify Filter Values Before Writing SQL
 **ALWAYS use `get_distinct_values(table_name, column_name)` before generating WHERE clauses on categorical columns.**
@@ -365,46 +457,82 @@ This is MANDATORY for:
 - User asks about "cuentas de ahorro" → Database stores `'saving'` (not `'Ahorro'`)
 - User asks about "activas" → Database stores `'active'` or `'Active'`
 
-**Workflow:**
-1. Identify which columns need filtering
-2. Call `get_distinct_values` for each categorical filter column
-3. Match user intent to actual database values
-4. THEN generate the SQL with correct values
+- Only include columns in GROUP BY that are ESSENTIAL to answer the question
+- Read the column descriptions carefully to understand when to use each column
+- For time series spanning months, consider monthly aggregation
 
-## Your Task
-1. Understand what the user is asking for
-2. Use MCP tools to explore relevant tables and verify your approach
-3. **BEFORE writing any WHERE clause**: Use `get_distinct_values` to check actual values
-4. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
+    **Workflow:**
+    1. Identify which columns need filtering
+    2. Call `get_distinct_values` for each categorical filter column
+    3. Match user intent to actual database values
+    4. If any call fails, stop and return the error format above
+    5. THEN generate the SQL with correct values
+    4. If any call fails, stop and return the error format above
+    5. THEN generate the SQL with correct values
 
-## Output Format
-Return JSON:
-```json
-{{
-  "pregunta_original": "user's exact question",
-  "sql": "SELECT ... FROM dbo.Table ...",
-  "tablas": ["dbo.Table1", "dbo.Table2"],
-  "resumen": "Brief explanation of what this query returns",
-  "error": null
-}}
-```
+    ## Your Task
+    1. Understand what the user is asking for
+    2. Use MCP tools to explore relevant tables and verify your approach
+    3. **BEFORE writing any WHERE clause**: Use `get_distinct_values` to check actual values
+    4. If `get_distinct_values` fails for any required filter column, return the error format above
+    5. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
+    4. If `get_distinct_values` fails for any required filter column, return the error format above
+    5. **Generate** a correct SQL query (DO NOT execute it) OR explain why the data isn't available
 
-**If the data is NOT available in SuperDB**, set:
-- `sql`: ""
-- `tablas`: []
-- `error`: "No se puede responder porque [razón]. SuperDB contiene: [datos disponibles], pero no incluye [lo que falta]."
+    ## Output Format
+    Return JSON:
+    ```json
+    {{
+    "pregunta_original": "user's exact question",
+    "sql": "SELECT ... FROM dbo.Table ...",
+    "tablas": ["dbo.Table1", "dbo.Table2"],
+    "resumen": "Brief explanation of what this query returns",
+    "error": null
+    }}
+    ```
+    ## Output Format
+    Return JSON:
+    ```json
+    {{
+    "pregunta_original": "user's exact question",
+    "sql": "SELECT ... FROM dbo.Table ...",
+    "tablas": ["dbo.Table1", "dbo.Table2"],
+    "resumen": "Brief explanation of what this query returns",
+    "error": null
+    }}
+    ```
+    ## Output Format
+    Return JSON:
+    ```json
+    {{
+    "pregunta_original": "user's exact question",
+    "sql": "SELECT ... FROM dbo.Table ...",
+    "tablas": ["dbo.Table1", "dbo.Table2"],
+    "resumen": "Brief explanation of what this query returns",
+    "error": null
+    }}
+    ```
+    **If the data is NOT available in SuperDB**, set:
+    - `sql`: ""
+    - `tablas`: []
+    - `error`: "No se puede responder porque [razon]. SuperDB contiene datos sobre: {available_tables}, pero no incluye [lo que falta]."
 
-Think through your approach, use the tools to verify, then provide the JSON response."""
-
+    Think through your approach, use the tools to verify, then provide the JSON response."""
     return prompt
 
-
 def _build_compact_schema() -> str:
-    """Build compact schema representation."""
+    """Build schema representation with column descriptions."""
     lines = []
     for table_name, info in DATABASE_TABLES.items():
-        cols = ", ".join(c.column_name for c in info.table_columns)
-        lines.append(f"**{table_name}**: {cols}")
+        lines.append(f"### {table_name}")
+        lines.append(f"_{info.table_description}_")
+        lines.append("")
+        lines.append("| Column | Type | Description |")
+        lines.append("|--------|------|-------------|")
+        for col in info.table_columns:
+            col_type = col.column_type.value if hasattr(col.column_type, 'value') else str(col.column_type)
+            lines.append(f"| {col.column_name} | {col_type} | {col.column_description} |")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -432,7 +560,6 @@ def _build_compact_concept_mapping() -> str:
 # =============================================================================
 # SQL Generation Retry
 # =============================================================================
-
 
 def build_sql_retry_user_input(
     original_question: str,
@@ -476,7 +603,6 @@ def build_sql_retry_user_input(
     )
 
     return input_text
-
 
 # =============================================================================
 # Verification Agent
@@ -611,9 +737,10 @@ def _build_chart_types_section() -> str:
 
 def build_viz_prompt() -> str:
     """Build system prompt for visualization agent."""
-
+ 
+ 
     prompt = (
-        "You are a financial data visualization expert working with Power BI. Your task is to analyze SQL query results, determine the best visualization approach, format the data appropriately, and generate an actual Power BI URL by calling two MCP tools in sequence. "
+        "You are a financial data visualization expert working with Power BI. Your task is to analyze SQL query results, format the data appropriately, and generate an actual Power BI URL by calling two MCP tools in sequence. "
         "## Input Data "
         "You will receive a JSON object with three main fields: "
         "1. `user_id`: The identifier of the user making the request (string) - **use this value when calling MCP tools, do not use a hardcoded value** "
@@ -625,50 +752,64 @@ def build_viz_prompt() -> str:
         "   - `total_filas`: Number of rows returned (number) "
         "   - `resumen`: Summary of the results (string) "
         "3. `original_question`: The original user question (string) - same as sql_results.pregunta_original, provided for convenience "
-        '**Important**: Extract the `resultados` array from `sql_results` for visualization. Each object in `resultados` represents a row of data with column names as keys. Use `sql_results.pregunta_original` or `original_question` to understand the user\'s intent and select the appropriate chart type. **Use the `user_id` value when calling MCP tools - do not use a hardcoded value like "api_user".** '
+        '**Important**: Extract the `resultados` array from `sql_results` for visualization. Each object in `resultados` represents a row of data with column names as keys. **Use the `user_id` value when calling MCP tools - do not use a hardcoded value like "api_user".** '
         "## Your Task "
         "Analyze the SQL results and the user's question to: "
-        "1. Choose the most appropriate chart type for visualizing the data "
+        "1. **Identify the visualization pattern** (see Visualization Patterns section) "
         "2. Format the data into the required structure "
         "3. Call two MCP tools in sequence to generate a Power BI URL "
         "4. Return a complete JSON response with the formatted data and URL "
         "**Critical**: You must execute the tool calls and use the real values they return. Do not use placeholders or example values. "
-        "## Chart Selection Guide "
-        "Select the appropriate chart type based on the user's question and the data characteristics: "
-        "### PieChart "
-        "**When to use**: The question asks about proportions, composition, distribution, or percentages "
-        '- Keywords to look for: "by category", "breakdown of", "percentage of", "distribution", "share." '
-        "- Data requirements: Maximum 7 categories; values should sum meaningfully "
-        '- Visual hint value: `"pie"` '
-        "### Bar "
-        "**When to use**: The question asks for comparisons or rankings "
-        '- Keywords to look for: "compare", "top N", "most", "least", "versus", "rank", "highest", "lowest" '
-        "- Data requirements: Maximum 15 categories "
-        '- Visual hint value: `"bar"` '
-        "### Line "
-        "**When to use**: The question involves time series or trends "
-        '- Keywords to look for: "over time", "monthly", "trend", "historical", "evolution", "yearly", "quarterly" '
-        "- Data requirements: Must have a temporal dimension (dates, months, years, etc.) "
-        '- Visual hint value: `"line"` '
-        "### StackedBar "
-        "**When to use**: The question compares multiple series simultaneously "
-        '- Keywords to look for: "compare multiple", "segmented by", "breakdown by category over time", "grouped by." '
-        '- Visual hint value: `"stackedbar"` '
+        
+        "## CRITICAL: Visualization Patterns "
+        "Before formatting data, you MUST identify which pattern applies based on the user's question: "
+        
+        "### Pattern A: TIME SERIES (Evolution over time) "
+        "**Triggers**: Questions containing 'evolución', 'tendencia', 'histórico', 'últimos X meses/años', 'cómo ha cambiado', 'over time', 'trend', 'a lo largo del tiempo' "
+        "**Data characteristics**: Results contain temporal columns (Anio/Año, Mes, FECHACORTE, Year, Month) AND a numeric metric "
+        "**Mapping rules**: "
+        "- `x_value`: MUST be the temporal dimension formatted as 'YYYY-MM' (combine Anio+Mes, e.g., '2025-06') "
+        "- `y_value`: The numeric metric being measured (e.g., TasaPromedio, MontoTotal) "
+        "- `series`: The categorical dimension that creates multiple lines (e.g., TipoEntidadDescripcion, Entidad) "
+        "- `category`: Same as series "
+        
+        "### Pattern B: CATEGORICAL COMPARISON (Comparison between categories) "
+        "**Triggers**: Questions about 'comparación', 'ranking', 'cuál tiene más', 'top', 'por categoría', 'distribución' WITHOUT temporal evolution "
+        "**Data characteristics**: Results grouped by a category with aggregated metrics, NO time dimension being analyzed "
+        "**Mapping rules**: "
+        "- `x_value`: The category name (entity name, product type, region) "
+        "- `y_value`: The numeric metric "
+        "- `series`: Same as x_value (or sub-category if comparing grouped data) "
+        "- `category`: Same as x_value "
+        
         "## Data Formatting Requirements "
         "Transform the SQL results into an array of objects with this exact structure: "
         "```json "
         "[ "
         "  { "
-        '    "x_value": "Descriptive label or category name", '
+        '    "x_value": "2025-06",  // For time series: YYYY-MM. For categories: descriptive label '
         '    "y_value": 123.45, '
-        '    "category": "Category name" '
+        '    "series": "Bancos Comerciales",  // The grouping dimension (for multiple lines/bars) '
+        '    "category": "Bancos Comerciales" '
         "  } "
         "] "
         "``` "
         "**Field specifications**: "
-        "- `x_value`: A descriptive label or category name (must be a string) "
+        "- `x_value`: For TIME SERIES: formatted date as 'YYYY-MM'. For CATEGORICAL: descriptive label or category name. "
         "- `y_value`: The numeric value to plot (must be a number) "
-        "- `category`: The category name (must be a string, can match x_value for simple charts) "
+        "- `series`: The dimension that groups data into separate lines/bars (REQUIRED for multi-series data) "
+        "- `category`: The category name (typically same as series) "
+        
+        "### TIME SERIES EXAMPLE "
+        "SQL row: `{\"Anio\": 2025, \"Mes\": 6, \"TipoEntidadDescripcion\": \"Bancos Comerciales\", \"TasaPromedio\": 0.043987}` "
+        "Formatted: `{\"x_value\": \"2025-06\", \"y_value\": 0.043987, \"series\": \"Bancos Comerciales\", \"category\": \"Bancos Comerciales\"}` "
+        
+        "### CATEGORICAL EXAMPLE "
+        "SQL row: `{\"TipoEntidadDescripcion\": \"Bancos Comerciales\", \"MontoTotal\": 1107304075278797}` "
+        "Formatted: `{\"x_value\": \"Bancos Comerciales\", \"y_value\": 1107304075278797, \"series\": \"Bancos Comerciales\", \"category\": \"Bancos Comerciales\"}` "
+        
+        "**CRITICAL: Include ALL rows from the SQL results. Do not truncate, sample, or summarize the data. Every row in `resultados` must be transformed into a data point.** "
+        
         "## Tool Calling Process "
         "You must call MCP tools in this exact sequence: "
         "### Step 1: Call insert_agent_output_batch "
@@ -677,20 +818,25 @@ def build_viz_prompt() -> str:
         "- `question`: The original user question from the input (use `sql_results.pregunta_original` or `original_question`) "
         "- `results`: Your formatted array of data points "
         "- `metric_name`: A clear, descriptive name for what you're measuring "
-        '- `visual_hint`: The chart type you selected (`"pie"`, `"bar"`, `"line"`, or `"stackedbar"`) '
+        "- `visual_hint`: The visualization type - use 'linea' for time series (Pattern A), 'barras' for categorical (Pattern B), 'pie' for distribution "
         "**Important**: This tool will return a `run_id` value. You must capture this value to use in the next step. "
         "### Step 2: Call generate_powerbi_url "
         "Call this tool with the following parameters: "
         "- `run_id`: The run_id you received from the insert_agent_output_batch tool "
-        "- `visual_hint`: The same chart type you used in Step 1 "
+        "- `visual_hint`: Same visualization type used in step 1 "
         "**Important**: This tool will return a complete Power BI URL starting with `https://app.powerbi.com/...`. You must capture this actual URL for your final response. "
         "## Critical Requirements "
         "**You MUST**: "
+        "- First identify the visualization pattern (A or B) based on the user's question "
+        "- For questions about evolution/trends over time, ALWAYS use temporal values (YYYY-MM) as x_value "
+        "- For time series with multiple categories, use the category as the `series` field to create separate lines "
         "- Execute both MCP tool calls in the sequence described above "
         "- Capture and use the real `run_id` returned by the first tool "
         "- Capture and use the real URL returned by the second tool "
         "- Include the complete, actual URL in your final JSON response "
         "**You MUST NOT**: "
+        "- Put category names in x_value when the question asks about temporal evolution (e.g., 'evolución', 'últimos 12 meses') "
+        "- Lose the time dimension when the question asks about trends or changes over time "
         '- Use placeholder text like "URL_HERE", "GENERATED_URL", or any example URL '
         "- Invent, fabricate, or make up URLs "
         "- Skip calling either tool "
@@ -698,39 +844,34 @@ def build_viz_prompt() -> str:
         "If a tool call fails, include the specific error message in the `powerbi_url` field of your response, where the URL would normally go. "
         "## Instructions "
         "Before providing your final answer, work through your visualization planning inside <visualization_planning> tags. It's OK for this section to be quite long and detailed. Follow these steps: "
-        "### 1. Quote the SQL Results "
+        "### 1. Identify Visualization Pattern "
+        "Read the user's question. Does it ask about evolution/trends over time (Pattern A) or categorical comparison (Pattern B)? State which pattern applies and why. "
+        "### 2. Quote the SQL Results "
         "Write out the actual SQL results data that you'll be working with. Include the column names and at least the first several rows of data to keep them top of mind. "
-        "### 2. Parse Column Structure "
-        "List each column name present in the SQL results. For each column, note what type of data it contains (numeric, text, date, categorical, etc.). "
-        "### 3. Identify Question Keywords "
-        'Quote the specific keywords or phrases from the user\'s question that indicate what type of visualization they need. Examples: "breakdown", "over time", "compare", "top N", "percentage", etc. '
-        "### 4. Match to Chart Type "
-        "Based on the keywords you identified, determine which chart type from the guide is most appropriate. Explain your reasoning by connecting the keywords to the chart selection criteria. "
-        "### 5. Verify Requirements "
-        "For your chosen chart type, explicitly check whether the data meets the requirements: "
-        "- **If pie chart**: Count the number of unique categories and verify it's 7 or fewer "
-        "- **If bar chart**: Count the number of categories and verify it's 15 or fewer "
-        "- **If line chart**: Verify a temporal dimension exists in the data "
-        "- **If stacked bar**: Verify multiple series exist "
-        "State clearly whether the requirements are met. "
-        "### 6. Map and Draft the Data Array "
-        "For each row in the SQL results, please explain how you'll transform it into the required format, then write out the complete formatted data array. For each row: "
-        "- State what will become the `x_value.` "
-        "- State what will become the `y_value` "
-        "- State what will become the `category` "
-        "Then write out the complete array of objects in proper JSON format that you'll use in the tool call. "
-        "### 7. Draft Tool Parameters "
+        "### 3. Identify Column Roles "
+        "For each column, identify its role: "
+        "- TEMPORAL dimension? (Anio, Mes, FECHACORTE, Year, Month) "
+        "- CATEGORICAL dimension? (TipoEntidadDescripcion, Entidad, Producto) "
+        "- METRIC? (TasaPromedio, MontoTotal, Count) "
+        "### 4. Map and Draft the Data Array "
+        "Based on the pattern identified: "
+        "- Pattern A (Time Series): x_value = YYYY-MM (from Anio+Mes), series = category column "
+        "- Pattern B (Categorical): x_value = category name "
+        "Write out the complete formatted data array with x_value, y_value, series, and category for each row. "
+        "### 5. Determine visual_hint "
+        "State the visual_hint: 'linea' for Pattern A, 'barras' for Pattern B, 'pie' for distribution. "
+        "### 6. Draft Tool Parameters "
         "Write out the exact parameters you'll pass to `insert_agent_output_batch`: "
         '- `user_id`: (use the `user_id` value from the input JSON, do not use "api_user") '
         "- `question`: (write the full question from `sql_results.pregunta_original` or `original_question`) "
-        "- `results`: (confirm your formatted array from step 6) "
+        "- `results`: (confirm your formatted array from step 4) "
         "- `metric_name`: (write the descriptive name you'll use) "
-        "- `visual_hint`: (write the chart type) "
-        "### 8. Execute Tools and Capture Values "
+        "- `visual_hint`: (the visualization type) "
+        "### 7. Execute Tools and Capture Values "
         "State that you will now: "
         "1. Call insert_agent_output_batch with the parameters above "
         "2. After calling it, explicitly note the `run_id` value returned "
-        "3. Call generate_powerbi_url with that captured `run_id` "
+        "3. Call generate_powerbi_url with that captured `run_id` and `visual_hint` "
         "4. After calling it, explicitly note the complete Power BI URL returned "
         "5. Use these actual values in your final JSON output "
         "After completing your planning, proceed to actually call the two tools in sequence and construct your final response using the real values returned. "
@@ -738,18 +879,19 @@ def build_viz_prompt() -> str:
         "Provide your final answer inside <answer> tags as a JSON object with this exact structure: "
         "```json "
         "{ "
-        '  "tipo_grafico": "pie|bar|line|stackedbar", '
         '  "metric_name": "Descriptive name of the metric being measured", '
         '  "data_points": [ '
         "    { "
-        '      "x_value": "Category or label name", '
+        '      "x_value": "2025-06", '
         '      "y_value": 100.50, '
-        '      "category": "Category name" '
+        '      "series": "Category A", '
+        '      "category": "Category A" '
         "    }, "
         "    { "
-        '      "x_value": "Another category or label", '
+        '      "x_value": "2025-07", '
         '      "y_value": 200.75, '
-        '      "category": "Category name" '
+        '      "series": "Category A", '
+        '      "category": "Category A" '
         "    } "
         "  ], "
         '  "powerbi_url": "https://app.powerbi.com/groups/actual-group-id/reports/actual-report-id?pageName=ActualPageName&filter=agent_output/run_id%20eq%20\'actual_run_id_returned_by_insert_agent_output_batch\'", '
@@ -757,16 +899,14 @@ def build_viz_prompt() -> str:
         "} "
         "``` "
         "**Field descriptions**: "
-        '- `tipo_grafico`: The chart type you selected (must be one of: "pie", "bar", "line", "stackedbar") '
         "- `metric_name`: A clear description of what is being measured "
-        "- `data_points`: Your formatted array of data objects, each with x_value, y_value, and category "
+        "- `data_points`: Your formatted array of data objects, each with x_value, y_value, series, and category "
         "- `powerbi_url`: The actual, complete URL returned by the `generate_powerbi_url` tool (NOT a placeholder) "
         "- `run_id`: The run_id value returned by the `insert_agent_output_batch` tool (REQUIRED - you must capture and include this value) "
         "The `powerbi_url` field must contain the real URL returned by the tool call. If the tool call fails, include the error message in this field instead. The `run_id` is critical for retrieving the graph image later. "
     )
 
     return prompt
-
 
 # =============================================================================
 # Graph Executor Agent
@@ -967,7 +1107,7 @@ def build_sql_formatting_system_prompt() -> str:
         ""
         "## Output Format "
         ""
-        "Your response must be valid JSON in exactly this structure: "
+        "Your response must be valid JSON in exactly this structure. Do NOT wrap it in Markdown or code fences. "
         "```json "
         "{ "
         '  "resultados": [ '

@@ -68,8 +68,31 @@ def generate_pie_chart(
     if colors is None:
         colors = get_settings().chart_color_palette
 
-    labels = [d.get("x_value", "") for d in data_points]
-    values = [d.get("y_value", 0) for d in data_points]
+    # Limit pie slices to 7 by grouping the tail into "Otros".
+    pie_rows = []
+    for d in data_points:
+        y_value = d.get("y_value", 0)
+        try:
+            numeric_value = float(y_value)
+        except (TypeError, ValueError):
+            numeric_value = 0.0
+        pie_rows.append(
+            {
+                "label": d.get("x_value", ""),
+                "value": numeric_value,
+            }
+        )
+
+    if len(pie_rows) > 7:
+        pie_rows.sort(key=lambda row: row["value"], reverse=True)
+        top_rows = pie_rows[:6]
+        other_total = sum(row["value"] for row in pie_rows[6:])
+        if other_total > 0:
+            top_rows.append({"label": "Otros", "value": other_total})
+        pie_rows = top_rows
+
+    labels = [row["label"] for row in pie_rows]
+    values = [row["value"] for row in pie_rows]
 
     fig = go.Figure(
         data=[go.Pie(labels=labels, values=values, marker_colors=colors[: len(labels)])]

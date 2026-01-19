@@ -37,7 +37,7 @@ class SchemaService:
         Returns:
             Dictionary with tables array:
             {
-                "tables": ["dbo.People", "dbo.Accounts"]
+                "tables": ["dbo.Tasas_Captacion", "dbo.Distribucion_Cartera"]
             }
         """
         try:

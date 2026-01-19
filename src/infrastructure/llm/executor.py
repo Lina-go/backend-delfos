@@ -2,11 +2,13 @@
 Agent executor for running agents in isolation.
 """
 
+import asyncio
 import logging
 from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
+from src.config.settings import get_settings
 from src.utils.json_parser import JSONParser
 from src.utils.retry import run_with_retry
 
@@ -14,12 +16,16 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+_MAX_CONCURRENT = max(1, get_settings().llm_max_concurrent_requests)
+_LLM_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT)
+
 
 async def run_single_agent(agent: Any, input_text: str) -> str:
     """Run a single agent in isolation using its native ``run`` method."""
 
     async def _execute_agent() -> str:
-        response = await agent.run(input_text)
+        async with _LLM_SEMAPHORE:
+            response = await agent.run(input_text)
 
         # Logging for debugging
         logger.info("--------------------------------")
@@ -53,7 +59,8 @@ async def run_agent_with_format(
 
     async def _execute_agent() -> T | str:
         # 1. Execute the agent (invokes tools)
-        response = await agent.run(input_text)
+        async with _LLM_SEMAPHORE:
+            response = await agent.run(input_text)
 
         # Detailed logging
         logger.info("--------------------------------")
@@ -69,10 +76,14 @@ async def run_agent_with_format(
             try:
                 json_data = JSONParser.extract_json(text_result)
 
-                if json_data:
+                # Check for non-empty dict with actual values (not all None)
+                if json_data and any(v is not None for v in json_data.values()):
                     return response_format(**json_data)
                 else:
-                    logger.warning("No valid JSON found in the response.")
+                    logger.warning(
+                        "No valid JSON found or JSON is empty/all-null in the response. "
+                        f"Extracted data: {json_data}"
+                    )
 
             except (ValidationError, ValueError, Exception) as e:
                 logger.error(
