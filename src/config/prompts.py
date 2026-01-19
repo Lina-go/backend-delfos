@@ -41,23 +41,8 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
     context_rules = ""
     if has_context:
         context_rules = (
-            ""
-            "**REFINEMENT DETECTION (CRITICAL)**: "
-            "When user wants to FILTER or MODIFY the previous query, classify as **data_question** (NOT follow_up or viz_request). "
-            "These patterns indicate refinement and require NEW SQL: "
-            "- 'solo para X', 'solamente para X', 'únicamente para X' "
-            "- 'ahora para X', 'pero para X', 'y para X', 'y si quiero verla para X' "
-            "- 'filtra por X', 'filtrado por X' "
-            "- 'excluye X', 'sin incluir X', 'quita X', 'menos X' "
-            "- 'y si lo vemos para...', 'qué pasa si filtramos por...' "
-            "- 'ahora muéstrame solo...', 'pero solo de...' "
-            "- 'para el banco X', 'de la entidad X', 'para Bancolombia', 'para Lulo Bank' "
-            "- 'del último mes', 'de este año', 'desde enero', 'del último trimestre' "
-            f"ALL of the above -> **{QueryType.DATA_QUESTION.value}** "
-            ""
-            f"- If asks 'why?' or requests explanation (¿Por qué?, Explícame) -> **{QueryType.FOLLOW_UP.value}** "
-            f"- If asks ONLY to change chart type (en barras, en pie, grafícalo) -> **{QueryType.VIZ_REQUEST.value}** "
-            ""
+            f"- If asks 'why?' or requests explanation about previous data -> **{QueryType.FOLLOW_UP.value}** "
+            f"- If asks to graph or change chart type -> **{QueryType.VIZ_REQUEST.value}** "
         )
     else:
         context_rules = (
@@ -83,7 +68,6 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         '   - INCLUDES: Point-in-time queries (e.g., "Current balance"). '
         '   - INCLUDES: Trends & comparisons (e.g., "Compare branches"). '
         '   - INCLUDES: **What-if scenarios & Simulations** (e.g., "If interest rates increase by 2%...", "If customers double..."). '
-        '   - INCLUDES: **Refinements of previous queries** (e.g., "solo para Lulo Bank", "del último trimestre"). '
         "   - Examples: "
         '     "¿Cuál es el saldo total de la cartera del sistema financiero a la última fecha de corte?", '
         '     "¿Cómo ha evolucionado la cartera de consumo en el último año?", '
@@ -107,11 +91,10 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         "2. **CRITICAL**: Greetings (Hola, Gracias, Chao) should ALWAYS be classified as **greeting**, not general. "
         f"3. **CRITICAL**: If asking 'why?' or 'explain' AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.FOLLOW_UP.value if has_context else QueryType.GENERAL.value}**. "
         f"4. **CRITICAL**: If asking to graph/visualize AND previous data exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.VIZ_REQUEST.value if has_context else QueryType.GENERAL.value}**. "
-        f"5. **CRITICAL**: If asking to FILTER or MODIFY previous results (solo para X, del último mes, etc.) AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.DATA_QUESTION.value}** (requires new SQL). "
-        "6. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
-        "7. Eliminate non-fitting categories and choose one. "
-        "8. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
-        "9. Return classification JSON in `<classification>` tags. "
+        "5. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
+        "6. Eliminate non-fitting categories and choose one. "
+        "7. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
+        "8. Return classification JSON in `<classification>` tags. "
         ""
         "## Classification Priority "
         ""
@@ -156,30 +139,6 @@ def build_triage_system_prompt(has_context: bool = False) -> str:
         "{ "
         f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
         '  "reasoning": "Requiere datos base de clientes y saldos para proyectar el escenario hipotético." '
-        "} "
-        "</classification> "
-        ""
-        'User: "solo para Lulo Bank" (Previous context: YES) '
-        ""
-        "<analysis> "
-        "El usuario tiene contexto previo y solicita filtrar los resultados para una entidad específica (Lulo Bank). Esto requiere modificar el SQL anterior agregando un filtro WHERE. "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
-        '  "reasoning": "Refinamiento de consulta anterior - requiere nuevo SQL con filtro por entidad." '
-        "} "
-        "</classification> "
-        ""
-        'User: "y si lo vemos del último trimestre" (Previous context: YES) '
-        ""
-        "<analysis> "
-        "El usuario quiere modificar la consulta anterior para filtrar por un período de tiempo específico. Requiere nuevo SQL con filtro de fecha. "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
-        '  "reasoning": "Refinamiento temporal - requiere nuevo SQL con filtro de fecha." '
         "} "
         "</classification> "
         ""

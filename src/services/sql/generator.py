@@ -6,7 +6,6 @@ from typing import Any, cast
 
 from src.config.prompts import (
     build_sql_generation_system_prompt,
-    build_sql_refinement_prompt,
     build_sql_retry_user_input,
 )
 from src.config.settings import Settings
@@ -58,7 +57,6 @@ class SQLGenerator:
         arquetipo: str | None = None,
         previous_errors: list[str] | None = None,
         previous_sql: str | None = None,
-        refinement_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Generate SQL query from natural language.
@@ -71,20 +69,13 @@ class SQLGenerator:
             arquetipo: Optional archetype (A-N)
             previous_errors: Optional list of validation errors from previous attempt
             previous_sql: Optional SQL query from previous attempt that failed
-            refinement_context: Optional context for refining a previous query
-                - query: Previous user question
-                - sql: Previous SQL query
-                - results_count: Number of results from previous query
 
         Returns:
             Dictionary with SQL query and metadata
         """
         try:
-            # Disable cache for refinements and retries
-            use_cache = not (
-                (previous_errors and len(previous_errors) > 0) or
-                refinement_context is not None
-            )
+            # Only use cache for first attempt (no previous errors)
+            use_cache = not (previous_errors and len(previous_errors) > 0)
             cache_key = None
 
             if use_cache:
@@ -99,18 +90,12 @@ class SQLGenerator:
             if schema_context and schema_context.get("tables"):
                 prioritized_tables = schema_context.get("tables", [])
 
-            # Choose prompt based on whether this is a refinement
-            if refinement_context:
-                logger.info(f"SQLGenerator in REFINEMENT mode. Previous query: {refinement_context.get('query', '')[:50]}...")
-                system_prompt = build_sql_refinement_prompt(
-                    refinement_context=refinement_context,
-                    prioritized_tables=prioritized_tables,
-                )
-                user_input = message
-            elif previous_errors and len(previous_errors) > 0 and previous_sql:
-                system_prompt = build_sql_generation_system_prompt(
-                    prioritized_tables=prioritized_tables
-                )
+            system_prompt = build_sql_generation_system_prompt(
+                prioritized_tables=prioritized_tables
+            )
+
+            # Build user input
+            if previous_errors and len(previous_errors) > 0 and previous_sql:
                 user_input = build_sql_retry_user_input(
                     original_question=message,
                     previous_sql=previous_sql,
@@ -118,9 +103,6 @@ class SQLGenerator:
                     verification_suggestion=None,
                 )
             else:
-                system_prompt = build_sql_generation_system_prompt(
-                    prioritized_tables=prioritized_tables
-                )
                 user_input = message
 
             model = self.settings.sql_agent_model
@@ -215,11 +197,6 @@ class SQLGenerator:
                     "tablas": [],
                     "resumen": f"Error: Unexpected response type {type(result_model)}",
                 }
-
-            # Log refinement info if applicable
-            if refinement_context:
-                refinement_applied = result_dict.get("refinement_applied", "Filter applied")
-                logger.info(f"Refinement applied: {refinement_applied}")
 
             if use_cache and cache_key:
                 SemanticCache.set(cache_key, result_dict)
