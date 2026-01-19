@@ -33,7 +33,7 @@ from src.services.verification.verifier import ResultVerifier
 from src.services.viz.service import VisualizationService
 from src.config.archetypes import get_chart_type_for_archetype, get_archetype_letter_by_name
 from src.orchestrator.context import ConversationStore
-from src.orchestrator.handlers import GreetingHandler, FollowUpHandler, VizRequestHandler
+from src.orchestrator.handlers import GreetingHandler, FollowUpHandler, VizRequestHandler, GeneralHandler
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ class PipelineOrchestrator:
         self.greeting_handler = GreetingHandler()
         self.follow_up_handler = FollowUpHandler(settings)
         self.viz_request_handler = VizRequestHandler(settings)
+        self.general_handler = GeneralHandler(settings)
         self.intent = IntentClassifier(settings)
         self.schema = SchemaService(settings)
         self.sql_gen = SQLGenerator(settings)
@@ -517,7 +518,7 @@ class PipelineOrchestrator:
                 return response
 
             elif state.query_type in ("general", "out_of_scope"):
-                response = self._format_non_data_response(state, triage_result)
+                response = await self.general_handler.handle(message)
                 self.session_logger.end_session(
                     success=True,
                     final_message=json.dumps(response, indent=2, ensure_ascii=False),
@@ -529,7 +530,7 @@ class PipelineOrchestrator:
                 pass
 
             else:
-                response = self._format_non_data_response(state, triage_result)
+                response = await self.general_handler.handle(message)
                 self.session_logger.end_session(
                     success=True,
                     final_message=json.dumps(response, indent=2, ensure_ascii=False),
@@ -666,7 +667,7 @@ class PipelineOrchestrator:
                 return
 
             elif state.query_type in ("general", "out_of_scope"):
-                response = self._format_non_data_response(state, triage_result)
+                response = await self.general_handler.handle(message)
                 self.session_logger.end_session(
                     success=True,
                     final_message=json.dumps(response, indent=2, ensure_ascii=False),
@@ -679,7 +680,7 @@ class PipelineOrchestrator:
                 pass
 
             else:
-                response = self._format_non_data_response(state, triage_result)
+                response = await self.general_handler.handle(message)
                 self.session_logger.end_session(
                     success=True,
                     final_message=json.dumps(response, indent=2, ensure_ascii=False),
@@ -811,6 +812,35 @@ class PipelineOrchestrator:
                 errors=errors,
             )
             yield {"step": "error", "error": str(e)}
+
+
+    def _format_non_data_response(
+        self, state: PipelineState, triage_result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Format response for non-data questions (general, out_of_scope)."""
+        from src.config.message import get_rejection_message
+        from src.config.constants import QueryType
+        
+        query_type_str = state.query_type or "general"
+        try:
+            query_type = QueryType(query_type_str)
+        except ValueError:
+            query_type = QueryType.GENERAL
+            
+        message = get_rejection_message(query_type)
+        reasoning = triage_result.get("reasoning", message)
+        
+        return {
+            "patron": "general",
+            "datos": [],
+            "arquetipo": None,
+            "visualizacion": "NO",
+            "tipo_grafica": None,
+            "imagen": None,
+            "link_power_bi": None,
+            "insight": reasoning,
+            "error": "",
+        }
 
     def _format_non_comparacion_response(
         self, state: PipelineState, intent_result: dict[str, Any]
