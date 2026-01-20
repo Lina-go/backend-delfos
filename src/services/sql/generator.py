@@ -57,6 +57,7 @@ class SQLGenerator:
         arquetipo: str | None = None,
         previous_errors: list[str] | None = None,
         previous_sql: str | None = None,
+        mcp: Any | None = None,
     ) -> dict[str, Any]:
         """
         Generate SQL query from natural language.
@@ -124,7 +125,23 @@ class SQLGenerator:
                             "use_anthropic_api_for_claude is True but ANTHROPIC_API_KEY is not set"
                         )
                     logger.info(f"Using Anthropic API directly for Claude model: {model}")
-                    async with mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp:
+                    if mcp is None:
+                        async with mcp_connection(
+                            self.settings, allowed_tools=exploration_tools
+                        ) as mcp_tool:
+                            agent = create_anthropic_agent(
+                                settings=self.settings,
+                                name="SQLGenerator",
+                                instructions=system_prompt,
+                                tools=mcp_tool,
+                                model=model,
+                                max_tokens=sql_max_tokens,
+                                response_format=SQLResult,
+                            )
+                            result_model = await run_agent_with_format(
+                                agent, user_input, response_format=SQLResult
+                            )
+                    else:
                         agent = create_anthropic_agent(
                             settings=self.settings,
                             name="SQLGenerator",
@@ -139,7 +156,23 @@ class SQLGenerator:
                         )
                 else:
                     logger.info(f"Using Anthropic on Foundry for Claude model: {model}")
-                    async with mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp:
+                    if mcp is None:
+                        async with mcp_connection(
+                            self.settings, allowed_tools=exploration_tools
+                        ) as mcp_tool:
+                            agent = create_anthropic_foundry_agent(
+                                settings=self.settings,
+                                name="SQLGenerator",
+                                instructions=system_prompt,
+                                tools=mcp_tool,
+                                model=model,
+                                max_tokens=sql_max_tokens,
+                                response_format=SQLResult,
+                            )
+                            result_model = await run_agent_with_format(
+                                agent, user_input, response_format=SQLResult
+                            )
+                    else:
                         agent = create_anthropic_foundry_agent(
                             settings=self.settings,
                             name="SQLGenerator",
@@ -154,21 +187,34 @@ class SQLGenerator:
                         )
             else:
                 credential = get_shared_credential()
-                async with (
-                    azure_agent_client(self.settings, model, credential) as client,
-                    mcp_connection(self.settings, allowed_tools=exploration_tools) as mcp,
-                ):
-                    agent = client.create_agent(
-                        name="SQLGenerator",
-                        instructions=system_prompt,
-                        tools=mcp,
-                        max_tokens=sql_max_tokens,
-                        temperature=self.settings.sql_temperature,
-                        response_format=SQLResult,
-                    )
-                    result_model = await run_agent_with_format(
-                        agent, user_input, response_format=SQLResult
-                    )
+                async with azure_agent_client(self.settings, model, credential) as client:
+                    if mcp is None:
+                        async with mcp_connection(
+                            self.settings, allowed_tools=exploration_tools
+                        ) as mcp_tool:
+                            agent = client.create_agent(
+                                name="SQLGenerator",
+                                instructions=system_prompt,
+                                tools=mcp_tool,
+                                max_tokens=sql_max_tokens,
+                                temperature=self.settings.sql_temperature,
+                                response_format=SQLResult,
+                            )
+                            result_model = await run_agent_with_format(
+                                agent, user_input, response_format=SQLResult
+                            )
+                    else:
+                        agent = client.create_agent(
+                            name="SQLGenerator",
+                            instructions=system_prompt,
+                            tools=mcp,
+                            max_tokens=sql_max_tokens,
+                            temperature=self.settings.sql_temperature,
+                            response_format=SQLResult,
+                        )
+                        result_model = await run_agent_with_format(
+                            agent, user_input, response_format=SQLResult
+                        )
 
             if isinstance(result_model, SQLResult):
                 result_dict = result_model.model_dump()

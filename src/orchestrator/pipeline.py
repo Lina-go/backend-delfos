@@ -7,19 +7,25 @@ import unicodedata
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from src.config.archetypes import get_archetype_name
-from src.config.constants import PipelineStep, PipelineStepDescription
+from src.config.archetypes import (
+    get_archetype_name,
+    get_chart_type_for_archetype,
+    get_archetype_letter_by_name,
+)
+from src.config.constants import PipelineStep, PipelineStepDescription, QueryType
 from src.config.prompts import (
     build_format_prompt,
     build_intent_system_prompt,
     build_sql_execution_system_prompt,
     build_sql_generation_system_prompt,
+    build_sql_retry_user_input,
     build_triage_system_prompt,
     build_verification_system_prompt,
     build_viz_prompt,
 )
 from src.config.settings import Settings
 from src.infrastructure.logging.session_logger import SessionLogger
+from src.infrastructure.mcp.client import mcp_connection
 from src.orchestrator.state import PipelineState
 from src.services.formatting.formatter import ResponseFormatter
 from src.services.graph.service import GraphService
@@ -31,7 +37,7 @@ from src.services.sql.validation import SQLValidationService
 from src.services.triage.classifier import TriageClassifier
 from src.services.verification.verifier import ResultVerifier
 from src.services.viz.service import VisualizationService
-from src.config.archetypes import get_chart_type_for_archetype, get_archetype_letter_by_name
+from src.config.message import get_rejection_message
 from src.orchestrator.context import ConversationStore
 from src.orchestrator.handlers import GreetingHandler, FollowUpHandler, VizRequestHandler, GeneralHandler
 from src.services.verification.verification_result import VerificationResult
@@ -74,7 +80,12 @@ class PipelineOrchestrator:
             logger.error(f"Error closing pipeline resources: {e}", exc_info=True)
 
     async def _step_triage(
-        self, state: PipelineState, message: str, has_context: bool = False
+        self,
+        state: PipelineState,
+        message: str,
+        has_context: bool = False,
+        context_summary: str | None = None,
+        mcp: Any | None = None,
     ) -> dict[str, Any]:
         """Execute triage step with context awareness.
 
@@ -82,14 +93,23 @@ class PipelineOrchestrator:
             state: Current pipeline state
             message: User's natural language question
             has_context: Whether the user has previous conversation data
+            context_summary: Summary of available data in context
 
         Returns:
             Triage classification result
         """
         logger.info(f"{PipelineStep.TRIAGE.value}: {PipelineStepDescription.TRIAGE.value}")
-        triage_prompt = build_triage_system_prompt(has_context=has_context)
+        triage_prompt = build_triage_system_prompt(
+            has_context=has_context,
+            context_summary=context_summary,
+        )
         start_time = time.time()
-        triage_result = await self.triage.classify(message, has_context=has_context)
+        triage_result = await self.triage.classify(
+            message,
+            has_context=has_context,
+            context_summary=context_summary,
+            mcp=mcp,
+        )
         execution_time = (time.time() - start_time) * 1000
 
         if not triage_result or "query_type" not in triage_result:
@@ -151,11 +171,13 @@ class PipelineOrchestrator:
 
         return intent_result
 
-    async def _step_schema(self, state: PipelineState, message: str) -> dict[str, Any]:
+    async def _step_schema(
+        self, state: PipelineState, message: str, mcp: Any | None = None
+    ) -> dict[str, Any]:
         """Execute schema selection step."""
         logger.info(f"{PipelineStep.SCHEMA.value}: {PipelineStepDescription.SCHEMA.value}")
         start_time = time.time()
-        schema_result = await self.schema.get_schema_context(message)
+        schema_result = await self.schema.get_schema_context(message, mcp=mcp)
         execution_time = (time.time() - start_time) * 1000
         state.selected_tables = schema_result.get("tables", [])
         state.schema_context = schema_result
@@ -169,7 +191,11 @@ class PipelineOrchestrator:
         return schema_result
 
     async def _step_sql_generation(
-        self, state: PipelineState, message: str, max_retries: int = 2
+        self,
+        state: PipelineState,
+        message: str,
+        max_retries: int = 2,
+        mcp: Any | None = None,
     ) -> dict[str, Any]:
         """Execute SQL generation step with validation and retries."""
         logger.info(
@@ -193,6 +219,7 @@ class PipelineOrchestrator:
                 arquetipo=state.arquetipo,
                 previous_errors=validation_errors,
                 previous_sql=previous_sql,
+                mcp=mcp,
             )
             execution_time = (time.time() - start_time) * 1000
             state.sql_query = sql_result.get("sql")
@@ -286,7 +313,9 @@ class PipelineOrchestrator:
 
         return sql_result
 
-    async def _step_sql_execution(self, state: PipelineState) -> dict[str, Any]:
+    async def _step_sql_execution(
+        self, state: PipelineState, mcp: Any | None = None
+    ) -> dict[str, Any]:
         """Execute SQL query step."""
         logger.info(
             f"{PipelineStep.SQL_EXECUTION.value}: {PipelineStepDescription.SQL_EXECUTION.value}"
@@ -295,7 +324,7 @@ class PipelineOrchestrator:
         if state.sql_query is None:
             raise ValueError("SQL query is not set for execution")
         start_time = time.time()
-        exec_result = await self.sql_exec.execute(state.sql_query)
+        exec_result = await self.sql_exec.execute(state.sql_query, mcp=mcp)
         execution_time = (time.time() - start_time) * 1000
         state.sql_results = exec_result.get("resultados", [])
         state.total_filas = exec_result.get("total_filas", 0)
@@ -324,7 +353,7 @@ class PipelineOrchestrator:
         results_for_verification: list[dict[str, Any]] = state.sql_results or []
         sql_for_verification: str = state.sql_query or ""
         
-        # verifier.verify now returns VerificationResult instead of bool
+        # verify now returns VerificationResult instead of bool
         verification_result: VerificationResult = await self.verifier.verify(
             results_for_verification, sql_for_verification, message
         )
@@ -355,6 +384,7 @@ class PipelineOrchestrator:
         state: PipelineState,
         message: str,
         max_verification_retries: int = 2,
+        mcp: Any | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Execute SQL generation -> execution -> verification with retry loop.
@@ -369,8 +399,6 @@ class PipelineOrchestrator:
         Yields:
             Step events for streaming
         """
-        from src.config.prompts import build_sql_retry_user_input
-        
         verification_attempt = 0
         
         while verification_attempt < max_verification_retries:
@@ -392,9 +420,10 @@ class PipelineOrchestrator:
             
             # Step 4: SQL GENERATION (with validation retry loop inside)
             sql_result = await self._step_sql_generation(
-                state, 
+                state,
                 retry_message if verification_attempt > 0 else message,
-                max_retries=2
+                max_retries=2,
+                mcp=mcp,
             )
             yield {
                 "step": "sql_generation",
@@ -408,7 +437,7 @@ class PipelineOrchestrator:
                 return
             
             # Step 5: SQL EXECUTION
-            exec_result = await self._step_sql_execution(state)
+            exec_result = await self._step_sql_execution(state, mcp=mcp)
             yield {
                 "step": "sql_execution",
                 "result": exec_result,
@@ -453,7 +482,7 @@ class PipelineOrchestrator:
                 )
 
     async def _step_visualization(
-        self, state: PipelineState, message: str
+        self, state: PipelineState, message: str, mcp: Any | None = None
     ) -> dict[str, Any] | None:
         """Execute visualization step."""
         if not (state.viz_required and state.sql_results):
@@ -488,6 +517,7 @@ class PipelineOrchestrator:
             tablas=state.selected_tables,
             resumen=state.sql_resumen,
             chart_type=state.tipo_grafico,
+            mcp=mcp,
         )
         execution_time = (time.time() - start_time) * 1000
         state.powerbi_url = viz_result.get("powerbi_url")
@@ -515,11 +545,16 @@ class PipelineOrchestrator:
             start_time = time.time()
             run_id = str(viz_result.get("run_id"))
             chart_type = state.tipo_grafico
+            title = (
+                viz_result.get("metric_name")
+                or state.sql_resumen
+                or "Visualizacion de resultados"
+            )
             graph_result = await self.graph.generate(
                 run_id=run_id,
                 chart_type=chart_type,
                 data_points=viz_result.get("data_points", []),
-                title=state.user_message,
+                title=title,
             )
             execution_time = (time.time() - start_time) * 1000
             state.image_url = graph_result.image_url
@@ -581,18 +616,30 @@ class PipelineOrchestrator:
         Returns:
             Formatted response dictionary
         """
-        from src.config.prompts import build_sql_retry_user_input
-        
         state = PipelineState(user_message=message, user_id=user_id)
         errors: list[str] = []
 
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
+        mcp = None
+        mcp_ctx = mcp_connection(self.settings)
         try:
-            has_context = ConversationStore.has_data(user_id)
+            mcp = await mcp_ctx.__aenter__()
 
-            # Step 1: TRIAGE
-            triage_result = await self._step_triage(state, message, has_context)
+            # Get context and check if we have previous data
+            context = ConversationStore.get(user_id)
+            has_context = context.last_results is not None and len(context.last_results) > 0
+
+            # Generate context summary for triage (if we have data)
+            context_summary = context.get_summary() if has_context else None
+
+            if context_summary:
+                logger.info(f"Context available: {len(context.last_results)} rows from previous query")
+
+            # Step 1: TRIAGE (with context summary)
+            triage_result = await self._step_triage(
+                state, message, has_context, context_summary, mcp=mcp
+            )
 
             # Route based on query_type
             if state.query_type == "greeting":
@@ -605,7 +652,6 @@ class PipelineOrchestrator:
                 return response
 
             elif state.query_type == "follow_up":
-                context = ConversationStore.get(user_id)
                 response = await self.follow_up_handler.handle(message, context)
                 self.session_logger.end_session(
                     success=True,
@@ -615,7 +661,6 @@ class PipelineOrchestrator:
                 return response
 
             elif state.query_type == "viz_request":
-                context = ConversationStore.get(user_id)
                 response = await self.viz_request_handler.handle(message, user_id, context)
                 self.session_logger.end_session(
                     success=True,
@@ -651,7 +696,7 @@ class PipelineOrchestrator:
                 return intent_result
 
             # Step 3: SCHEMA
-            await self._step_schema(state, message)
+            await self._step_schema(state, message, mcp=mcp)
 
             # Steps 4-6: SQL GENERATION + EXECUTION + VERIFICATION with retry
             max_verification_retries = 2
@@ -675,7 +720,8 @@ class PipelineOrchestrator:
                 sql_result = await self._step_sql_generation(
                     state,
                     retry_message if verification_attempt > 0 else message,
-                    max_retries=2
+                    max_retries=2,
+                    mcp=mcp,
                 )
                 if sql_result.get("error"):
                     errors.append(sql_result.get("error", ""))
@@ -687,7 +733,7 @@ class PipelineOrchestrator:
                     return sql_result
 
                 # Step 5: SQL_EXECUTION
-                await self._step_sql_execution(state)
+                await self._step_sql_execution(state, mcp=mcp)
 
                 # Step 6: VERIFICATION
                 await self._step_verification(state, message)
@@ -709,7 +755,7 @@ class PipelineOrchestrator:
                     )
 
             # Step 7: VISUALIZATION
-            viz_result = await self._step_visualization(state, message)
+            viz_result = await self._step_visualization(state, message, mcp=mcp)
 
             # Step 8: GRAPH
             if viz_result:
@@ -730,6 +776,8 @@ class PipelineOrchestrator:
                 chart_type=state.tipo_grafico,
                 run_id=state.run_id,
                 data_points=viz_result.get("data_points") if viz_result else None,
+                tables=state.schema_context.get("tables", []) if state.schema_context else [],
+                schema_context=state.schema_context,
             )
 
             self.session_logger.end_session(
@@ -748,6 +796,9 @@ class PipelineOrchestrator:
                 errors=errors,
             )
             raise
+        finally:
+            if mcp is not None:
+                await mcp_ctx.__aexit__(None, None, None)
 
 
     async def process_stream(
@@ -768,11 +819,25 @@ class PipelineOrchestrator:
 
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
+        mcp = None
+        mcp_ctx = mcp_connection(self.settings)
         try:
-            has_context = ConversationStore.has_data(user_id)
+            mcp = await mcp_ctx.__aenter__()
 
-            # Step 1: TRIAGE
-            triage_result = await self._step_triage(state, message, has_context)
+            # Get context and check if we have previous data
+            context = ConversationStore.get(user_id)
+            has_context = context.last_results is not None and len(context.last_results) > 0
+
+            # Generate context summary for triage (if we have data)
+            context_summary = context.get_summary() if has_context else None
+
+            if context_summary:
+                logger.info(f"Context available: {len(context.last_results)} rows from previous query")
+
+            # Step 1: TRIAGE (with context summary)
+            triage_result = await self._step_triage(
+                state, message, has_context, context_summary, mcp=mcp
+            )
             yield {
                 "step": "triage",
                 "result": triage_result,
@@ -791,7 +856,6 @@ class PipelineOrchestrator:
                 return
 
             elif state.query_type == "follow_up":
-                context = ConversationStore.get(user_id)
                 response = await self.follow_up_handler.handle(message, context)
                 self.session_logger.end_session(
                     success=True,
@@ -802,7 +866,6 @@ class PipelineOrchestrator:
                 return
 
             elif state.query_type == "viz_request":
-                context = ConversationStore.get(user_id)
                 response = await self.viz_request_handler.handle(message, user_id, context)
                 self.session_logger.end_session(
                     success=True,
@@ -852,7 +915,7 @@ class PipelineOrchestrator:
                 return
 
             # Step 3: SCHEMA
-            schema_result = await self._step_schema(state, message)
+            schema_result = await self._step_schema(state, message, mcp=mcp)
             yield {
                 "step": "schema",
                 "result": schema_result,
@@ -861,7 +924,7 @@ class PipelineOrchestrator:
 
             # Steps 4-6: SQL GENERATION + EXECUTION + VERIFICATION with retry
             async for sql_event in self._step_sql_with_verification_retry(
-                state, message, max_verification_retries=2
+                state, message, max_verification_retries=2, mcp=mcp
             ):
                 yield sql_event
                 
@@ -877,7 +940,7 @@ class PipelineOrchestrator:
                     return
 
             # Step 7: VISUALIZATION
-            viz_result = await self._step_visualization(state, message)
+            viz_result = await self._step_visualization(state, message, mcp=mcp)
             if viz_result:
                 yield {
                     "step": "visualization",
@@ -921,6 +984,8 @@ class PipelineOrchestrator:
                 chart_type=state.tipo_grafico,
                 run_id=state.run_id,
                 data_points=viz_result.get("data_points") if viz_result else None,
+                tables=state.schema_context.get("tables", []) if state.schema_context else [],
+                schema_context=state.schema_context,
             )
 
             self.session_logger.end_session(
@@ -938,14 +1003,15 @@ class PipelineOrchestrator:
                 final_message=f"Pipeline error: {str(e)}",
                 errors=errors,
             )
-            yield {"step": "error", "error": str(e)}  
+            yield {"step": "error", "error": str(e)}
+        finally:
+            if mcp is not None:
+                await mcp_ctx.__aexit__(None, None, None)
 
     def _format_non_data_response(
         self, state: PipelineState, triage_result: dict[str, Any]
     ) -> dict[str, Any]:
         """Format response for non-data questions (general, out_of_scope)."""
-        from src.config.message import get_rejection_message
-        from src.config.constants import QueryType
         
         query_type_str = state.query_type or "general"
         try:

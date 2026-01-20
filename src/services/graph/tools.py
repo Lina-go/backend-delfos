@@ -1,6 +1,7 @@
-"""Plotly chart builders that return styled HTML/PNG bytes."""
+﻿"""Plotly chart builders that return styled HTML/PNG bytes."""
 
 import logging
+import re
 from typing import Any
 from collections import defaultdict
 
@@ -21,17 +22,80 @@ config_params = {
 def _apply_styling(fig: go.Figure, title: str) -> None:
     """Apply shared styling similar to plotly_blob_demo."""
     fig.update_layout(
-        # title=f"<b>{title}</b>",
-        # title_font={"color": "black", "size": 14, "family": "Inter, Arial, sans-serif"},
+        title=f"<b>{title}</b>",
+        title_font={"color": "black", "size": 14, "family": "Inter, Arial, sans-serif"},
         template="plotly_white",
         hovermode="x unified",
         font={"family": "Inter, Arial, sans-serif", "size": 12},
-        margin={"l": 60, "r": 30, "t": 70, "b": 50},
+        margin={"l": 60, "r": 140, "t": 90, "b": 50},
+        showlegend=True,
+        legend={
+            "orientation": "v",
+            "yanchor": "top",
+            "y": 1,
+            "xanchor": "left",
+            "x": 1.02,
+        },
     )
     fig.update_xaxes(
         showgrid=True, gridcolor="rgba(0,0,0,0.05)", showspikes=True, spikemode="across"
     )
     fig.update_yaxes(showgrid=True, gridcolor="rgba(0,0,0,0.05)", zeroline=False)
+
+
+def _is_date_like(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    return bool(re.match(r"^\d{4}-\d{2}(-\d{2})?$", value))
+
+
+def _infer_axis_labels(
+    title: str,
+    data_points: list[dict[str, Any]],
+    chart_type: str,
+) -> tuple[str | None, str | None, str | None]:
+    if chart_type == "pie":
+        return None, None, None
+
+    x_label = "Categoria"
+    sample_x = next((d.get("x_value") for d in data_points if d.get("x_value") is not None), None)
+    if _is_date_like(sample_x):
+        x_label = "Fecha"
+
+    lower_title = title.lower()
+    y_label = "Valor"
+    tickformat = ".3s"
+
+    percent_keywords = ["porcentaje", "participacion", "composicion", "ratio", "share"]
+    rate_keywords = ["tasa", "interes"]
+    count_keywords = ["cantidad", "conteo", "numero", "total"]
+    amount_keywords = ["saldo", "monto", "cartera", "valor", "volumen", "ingreso"]
+
+    values = []
+    for d in data_points:
+        try:
+            values.append(float(d.get("y_value", 0)))
+        except (TypeError, ValueError):
+            continue
+
+    if values and min(values) >= 0 and max(values) <= 1:
+        y_label = "Porcentaje (%)"
+        tickformat = ".0%"
+    elif any(k in lower_title for k in percent_keywords):
+        y_label = "Porcentaje (%)"
+        tickformat = ".1%"
+    elif any(k in lower_title for k in rate_keywords):
+        y_label = "Tasa (%)"
+        tickformat = ".2%"
+    elif any(k in lower_title for k in count_keywords):
+        y_label = "Cantidad"
+        tickformat = ".3s"
+    elif any(k in lower_title for k in amount_keywords):
+        y_label = "Monto"
+        tickformat = ".3s"
+
+    return x_label, y_label, tickformat
 
 
 def _render_outputs(fig: go.Figure) -> tuple[bytes, bytes]:
@@ -83,8 +147,8 @@ def generate_pie_chart(
             }
         )
 
+    pie_rows.sort(key=lambda row: row["value"], reverse=True)
     if len(pie_rows) > 7:
-        pie_rows.sort(key=lambda row: row["value"], reverse=True)
         top_rows = pie_rows[:6]
         other_total = sum(row["value"] for row in pie_rows[6:])
         if other_total > 0:
@@ -115,7 +179,10 @@ def generate_bar_chart(
     y_values = [d.get("y_value", 0) for d in data_points]
 
     fig = go.Figure(data=[go.Bar(x=x_values, y=y_values, marker_color=colors[0])])
+    x_label, y_label, tickformat = _infer_axis_labels(title, data_points, "bar")
     _apply_styling(fig, title)
+    fig.update_xaxes(title=x_label or None)
+    fig.update_yaxes(title=y_label or None, tickformat=tickformat)
     html_bytes, png_bytes = _render_outputs(fig)
     return {"fig": fig, "html_bytes": html_bytes, "png_bytes": png_bytes}
 
@@ -131,13 +198,20 @@ def generate_line_chart(
  
     series_data: dict[str, dict[str, list]] = defaultdict(lambda: {"x": [], "y": []})
     for d in data_points:
-        category = d.get("category", "default")
+        category = d.get("category") or d.get("series") or "default"
         series_data[category]["x"].append(d.get("x_value", ""))
         series_data[category]["y"].append(d.get("y_value", 0))
  
     fig = go.Figure()
-    # Crear una línea por cada category
-    for idx, (category, values) in enumerate(series_data.items()):
+    series_totals = {
+        category: sum(
+            float(val) if isinstance(val, (int, float)) else 0 for val in values.get("y", [])
+        )
+        for category, values in series_data.items()
+    }
+    ordered_series = sorted(series_data.items(), key=lambda item: series_totals.get(item[0], 0), reverse=True)
+
+    for idx, (category, values) in enumerate(ordered_series):
         color = colors[idx % len(colors)]
         fig.add_trace(
             go.Scatter(
@@ -148,10 +222,12 @@ def generate_line_chart(
                 line_color=color,
             )
         )
+    x_label, y_label, tickformat = _infer_axis_labels(title, data_points, "line")
     _apply_styling(fig, title)
+    fig.update_xaxes(title=x_label or None)
+    fig.update_yaxes(title=y_label or None, tickformat=tickformat)
     html_bytes, png_bytes = _render_outputs(fig)
     return {"fig": fig, "html_bytes": html_bytes, "png_bytes": png_bytes}
-
 
 def generate_stacked_bar_chart(
     data_points: list[dict[str, Any]],
@@ -164,11 +240,23 @@ def generate_stacked_bar_chart(
 
     categories: dict[str, list[dict[str, Any]]] = {}
     for d in data_points:
-        cat = d.get("category", "default")
+        cat = d.get("category") or d.get("series") or "default"
         categories.setdefault(cat, []).append(d)
 
     fig = go.Figure()
-    for idx, (cat, points) in enumerate(categories.items()):
+    cat_totals = {}
+    for cat, points in categories.items():
+        total = 0.0
+        for p in points:
+            try:
+                total += float(p.get("y_value", 0))
+            except (TypeError, ValueError):
+                continue
+        cat_totals[cat] = total
+
+    ordered_categories = sorted(categories.items(), key=lambda item: cat_totals.get(item[0], 0), reverse=True)
+
+    for idx, (cat, points) in enumerate(ordered_categories):
         x_values = [p.get("x_value", "") for p in points]
         y_values = [p.get("y_value", 0) for p in points]
         fig.add_trace(
@@ -181,6 +269,12 @@ def generate_stacked_bar_chart(
         )
 
     fig.update_layout(barmode="stack")
+    x_label, y_label, tickformat = _infer_axis_labels(title, data_points, "stackedbar")
     _apply_styling(fig, title)
+    fig.update_xaxes(title=x_label or None)
+    fig.update_yaxes(title=y_label or None, tickformat=tickformat)
     html_bytes, png_bytes = _render_outputs(fig)
     return {"fig": fig, "html_bytes": html_bytes, "png_bytes": png_bytes}
+
+
+

@@ -27,7 +27,9 @@ class SchemaService:
         """Close MCP client connection (no-op, connections are managed via context manager)."""
         pass
 
-    async def get_schema_context(self, message: str) -> dict[str, Any]:
+    async def get_schema_context(
+        self, message: str, mcp: Any | None = None
+    ) -> dict[str, Any]:
         """
         Get schema context for SQL generation.
 
@@ -46,7 +48,23 @@ class SchemaService:
 
             # Get schema for each table using context manager
             schema_info = {}
-            async with MCPClient(self.settings) as mcp_client:
+            if mcp is None:
+                async with MCPClient(self.settings) as mcp_client:
+                    for table in tables:
+                        cache_key = f"schema_{table}"
+                        cached = SchemaCache.get(cache_key)
+
+                        if cached:
+                            schema_info[table] = cached
+                            logger.debug(f"Using cached schema for {table}")
+                        else:
+                            # Fetch schema from MCP
+                            table_schema = await mcp_client.get_table_schema(table)
+                            schema_info[table] = table_schema
+                            SchemaCache.set(cache_key, table_schema)
+                            logger.debug(f"Fetched and cached schema for {table}")
+            else:
+                mcp_client = MCPClient.from_connection(mcp)
                 for table in tables:
                     cache_key = f"schema_{table}"
                     cached = SchemaCache.get(cache_key)
@@ -55,7 +73,6 @@ class SchemaService:
                         schema_info[table] = cached
                         logger.debug(f"Using cached schema for {table}")
                     else:
-                        # Fetch schema from MCP
                         table_schema = await mcp_client.get_table_schema(table)
                         schema_info[table] = table_schema
                         SchemaCache.set(cache_key, table_schema)

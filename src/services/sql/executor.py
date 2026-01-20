@@ -1,151 +1,343 @@
 """SQL executor service."""
 
+import datetime
 import logging
+import re
+from decimal import Decimal
 from typing import Any
 
-from src.config.prompts import build_sql_formatting_system_prompt
 from src.config.settings import Settings
-from src.infrastructure.llm.executor import run_agent_with_format
-from src.infrastructure.llm.factory import (
-    azure_agent_client,
-    get_shared_credential,
-)
 from src.infrastructure.mcp.client import MCPClient
-from src.services.sql.models import SQLExecutionResult
 from src.utils.retry import run_with_retry
 
 logger = logging.getLogger(__name__)
 
+# Restricted eval context - only allows specific safe types
+# No builtins prevents access to dangerous functions
+_SAFE_EVAL_CONTEXT: dict[str, Any] = {
+    "__builtins__": {},
+    "Decimal": Decimal,
+    "datetime": datetime,
+    "None": None,
+    "True": True,
+    "False": False,
+}
+
+# Pattern to validate input contains only expected characters
+# Allows: tuples, strings, numbers, Decimal(), datetime.X(), None, True, False
+_SAFE_INPUT_PATTERN = re.compile(
+    r"^[\(\),\s\w\.'\":\-\+]+$"
+)
+
+
+class SQLExecutionResult:
+    """Standardized SQL execution result."""
+
+    def __init__(
+        self,
+        resultados: list[dict[str, Any]],
+        total_filas: int,
+        resumen: str,
+        insights: str | None = None,
+    ):
+        self.resultados = resultados
+        self.total_filas = total_filas
+        self.resumen = resumen
+        self.insights = insights
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "resultados": self.resultados,
+            "total_filas": self.total_filas,
+            "resumen": self.resumen,
+            "insights": self.insights,
+        }
+
+    @classmethod
+    def success(cls, resultados: list[dict[str, Any]], total_filas: int) -> "SQLExecutionResult":
+        return cls(
+            resultados=resultados,
+            total_filas=total_filas,
+            resumen=f"Consulta ejecutada exitosamente. Se devolvieron {total_filas} filas.",
+        )
+
+    @classmethod
+    def error(cls, message: str) -> "SQLExecutionResult":
+        return cls(
+            resultados=[],
+            total_filas=0,
+            resumen=message,
+        )
+
+
+class RowParser:
+    """Parses raw SQL result strings into structured data."""
+
+    @staticmethod
+    def parse(raw_results: str) -> list[tuple[Any, ...]]:
+        """
+        Parse raw SQL result rows into Python tuples.
+
+        Supports common SQL types: Decimal, datetime.date, datetime.datetime,
+        datetime.time, and basic Python literals.
+        """
+        if not raw_results:
+            return []
+
+        rows: list[tuple[Any, ...]] = []
+        for line in raw_results.splitlines():
+            line = line.strip()
+            if not line or line.lower() == "no results found.":
+                continue
+
+            parsed = RowParser._parse_line(line)
+            if isinstance(parsed, tuple):
+                rows.append(parsed)
+            else:
+                rows.append((parsed,))
+
+        return rows
+
+    @staticmethod
+    def _parse_line(line: str) -> Any:
+        """
+        Parse a single line, returning normalized values.
+
+        Uses restricted eval with:
+        1. Input validation - only allows safe characters
+        2. No builtins - prevents dangerous function calls
+        3. Limited namespace - only Decimal, datetime, None, True, False
+        """
+        # Validate input contains only expected characters
+        if not _SAFE_INPUT_PATTERN.match(line):
+            logger.warning(f"Row contains unexpected characters, skipping eval: '{line[:100]}...'")
+            return line
+
+        try:
+            value = eval(line, _SAFE_EVAL_CONTEXT)  # noqa: S307
+            return RowParser._normalize(value)
+        except Exception as e:
+            logger.warning(f"Failed to parse row '{line[:100]}...': {e}")
+            return line
+
+    @staticmethod
+    def _normalize(value: Any) -> Any:
+        """Convert complex types to JSON-serializable forms."""
+        if isinstance(value, tuple):
+            return tuple(RowParser._normalize_value(v) for v in value)
+        return RowParser._normalize_value(value)
+
+    @staticmethod
+    def _normalize_value(val: Any) -> Any:
+        """Convert a single value to JSON-serializable form."""
+        if val is None:
+            return None
+        if isinstance(val, Decimal):
+            return float(val)
+        if isinstance(val, datetime.datetime):
+            return val.isoformat()
+        if isinstance(val, datetime.date):
+            return val.isoformat()
+        if isinstance(val, datetime.time):
+            return val.isoformat()
+        if isinstance(val, bytes):
+            return val.decode("utf-8", errors="replace")
+        return val
+
+
+class ColumnExtractor:
+    """Extracts column names from SQL SELECT statements."""
+
+    @staticmethod
+    def extract(sql: str) -> list[str]:
+        """Extract column names/aliases from SQL SELECT clause."""
+        select_clause = ColumnExtractor._find_select_clause(sql)
+        if not select_clause:
+            return []
+
+        if select_clause.lower().startswith("distinct"):
+            select_clause = select_clause[8:].strip()
+
+        parts = ColumnExtractor._split_columns(select_clause)
+        return [name for part in parts if (name := ColumnExtractor._get_column_name(part))]
+
+    @staticmethod
+    def _find_select_clause(sql: str) -> str:
+        """Find the SELECT ... FROM clause, handling nested subqueries."""
+        text = sql.strip()
+        if not text:
+            return ""
+
+        lower_text = text.lower()
+        depth = 0
+        in_single = False
+        in_double = False
+        last_select_idx = None
+        last_from_idx = None
+
+        for i, ch in enumerate(lower_text):
+            if ch == "'" and not in_double:
+                in_single = not in_single
+            elif ch == '"' and not in_single:
+                in_double = not in_double
+            elif not in_single and not in_double:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth = max(depth - 1, 0)
+                elif depth == 0:
+                    if lower_text.startswith("select", i):
+                        last_select_idx = i
+                        last_from_idx = None
+                    elif lower_text.startswith("from", i) and last_select_idx is not None:
+                        last_from_idx = i
+
+        if last_select_idx is None or last_from_idx is None:
+            return ""
+
+        return text[last_select_idx + len("select") : last_from_idx].strip()
+
+    @staticmethod
+    def _split_columns(select_clause: str) -> list[str]:
+        """Split SELECT clause into individual column expressions."""
+        parts: list[str] = []
+        current: list[str] = []
+        depth = 0
+        in_single = False
+        in_double = False
+
+        for ch in select_clause:
+            if ch == "'" and not in_double:
+                in_single = not in_single
+            elif ch == '"' and not in_single:
+                in_double = not in_double
+            elif not in_single and not in_double:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth = max(depth - 1, 0)
+                elif ch == "," and depth == 0:
+                    if part := "".join(current).strip():
+                        parts.append(part)
+                    current = []
+                    continue
+            current.append(ch)
+
+        if trailing := "".join(current).strip():
+            parts.append(trailing)
+
+        return parts
+
+    @staticmethod
+    def _get_column_name(expression: str) -> str:
+        """Extract column name or alias from expression."""
+        exp = " ".join(expression.strip().split())
+        lower_exp = exp.lower()
+
+        # Check for AS alias
+        if " as " in lower_exp:
+            alias = exp[lower_exp.rfind(" as ") + 4 :].strip()
+            return ColumnExtractor._strip_wrappers(alias)
+
+        # Check for implicit alias (last token)
+        tokens = exp.split()
+        if len(tokens) > 1:
+            return ColumnExtractor._strip_wrappers(tokens[-1])
+
+        # Check for table.column format
+        if "." in exp:
+            return ColumnExtractor._strip_wrappers(exp.split(".")[-1])
+
+        return ColumnExtractor._strip_wrappers(exp)
+
+    @staticmethod
+    def _strip_wrappers(value: str) -> str:
+        """Remove SQL identifier wrappers like [], '', ""."""
+        value = value.strip()
+        if len(value) >= 2:
+            if (value[0], value[-1]) in [("[", "]"), ('"', '"'), ("'", "'")]:
+                return value[1:-1]
+        return value
+
+
+class ResultFormatter:
+    """Formats parsed rows into dictionaries with column names."""
+
+    @staticmethod
+    def format(rows: list[tuple[Any, ...]], columns: list[str]) -> list[dict[str, Any]]:
+        """Convert row tuples to list of dictionaries."""
+        if not rows:
+            return []
+
+        # Generate column names if not provided
+        if not columns or columns == ["*"]:
+            columns = [f"col{i + 1}" for i in range(len(rows[0]))]
+
+        return [ResultFormatter._row_to_dict(row, columns) for row in rows]
+
+    @staticmethod
+    def _row_to_dict(row: tuple[Any, ...], columns: list[str]) -> dict[str, Any]:
+        """Convert a single row tuple to dictionary."""
+        return {col: (row[idx] if idx < len(row) else None) for idx, col in enumerate(columns)}
+
 
 class SQLExecutor:
-    """
-    Executes SQL queries directly via MCP and formats results using an LLM agent.
-
-    This approach prevents infinite loops by:
-    1. Executing the SQL query directly (once) via MCPClient
-    2. Using an LLM agent (without tools) to format the results
-    """
+    """Executes SQL queries via MCP and formats results deterministically."""
 
     def __init__(self, settings: Settings):
-        """Initialize SQL executor."""
         self.settings = settings
 
     async def close(self) -> None:
-        """Close MCP connection (no-op, connections are managed via context manager)."""
+        """Close resources (no-op, connections managed via context manager)."""
         pass
 
-    async def execute(self, sql: str) -> dict[str, Any]:
-        """
-        Execute SQL query directly via MCP and format results using an LLM agent.
-        """
-        # Max size for raw results to send to LLM (500KB to be safe under 1MB API limit)
-        MAX_RESULT_SIZE = 100000
-        
+    async def execute(self, sql: str, mcp: Any | None = None) -> dict[str, Any]:
+        """Execute SQL query and return formatted results."""
         try:
-            # Step 1: Execute SQL query directly via MCP with retry logic
-            logger.info("Executing SQL query directly via MCP")
+            execution_result = await self._execute_with_retry(sql, mcp)
 
-            async def _execute_safe() -> dict[str, Any]:
-                """Execute SQL once via MCP, raising on connection timeouts."""
-                async with MCPClient(self.settings) as mcp_client:
-                    result = await mcp_client.execute_sql(sql)
-
-                error_msg = str(result.get("error") or "").lower()
-                if "login timeout" in error_msg or "timeout expired" in error_msg:
-                    raise Exception(f"SQL Connection Timeout: {result['error']}")
-
-                return result
-
-            try:
-                execution_result = await run_with_retry(
-                    _execute_safe, max_retries=3, initial_delay=2.0, backoff_factor=2.0
-                )
-            except Exception as e:
-                logger.error(f"SQL execution failed after retries: {e}")
-                return {
-                    "resultados": [],
-                    "total_filas": 0,
-                    "resumen": f"Error executing SQL (after retries): {str(e)}",
-                    "insights": None,
-                }
-
-            if execution_result.get("error"):
-                logger.error(f"SQL execution error: {execution_result['error']}")
-                return {
-                    "resultados": [],
-                    "total_filas": 0,
-                    "resumen": f"Error executing SQL: {execution_result['error']}",
-                    "insights": None,
-                }
+            if error := execution_result.get("error"):
+                logger.error(f"SQL execution error: {error}")
+                return SQLExecutionResult.error(f"Error executing SQL: {error}").to_dict()
 
             raw_results = execution_result.get("raw", "")
             row_count = execution_result.get("row_count", 0)
 
             logger.info(f"SQL executed successfully: {row_count} rows returned")
+            logger.debug("SQL raw results (first 2000 chars): %s", raw_results[:2000])
 
-            # TRUNCATE raw results if too large for LLM API
-            results_truncated = False
-            if len(raw_results) > MAX_RESULT_SIZE:
-                original_size = len(raw_results)
-                raw_results = raw_results[:MAX_RESULT_SIZE] + "\n... [TRUNCATED]"
-                results_truncated = True
-                logger.warning(
-                    f"Results truncated from {original_size:,} to {MAX_RESULT_SIZE:,} chars "
-                    f"({row_count} rows total)"
-                )
+            # Parse and format results
+            columns = ColumnExtractor.extract(sql)
+            rows = RowParser.parse(raw_results)
+            resultados = ResultFormatter.format(rows, columns)
 
-            # Step 2: Format results using LLM agent (NO MCP tools)
-            system_prompt = build_sql_formatting_system_prompt()
-            model = self.settings.sql_executor_agent_model
-            executor_max_tokens = self.settings.sql_executor_max_tokens
-            executor_temperature = self.settings.sql_executor_temperature
-
-            truncation_note = (
-                f"\n\nNOTE: Results were truncated for processing. "
-                f"Showing partial data from {row_count} total rows."
-                if results_truncated else ""
-            )
-            
-            user_message = (
-                f"Format the following SQL query results as dictionaries:\n\n"
-                f"SQL Query:\n{sql}\n\n"
-                f"Raw Results (newline-separated):\n{raw_results}\n\n"
-                f"Number of rows: {row_count}{truncation_note}"
-            )
-
-            logger.info(f"Formatting results via agent with model: {model} (no tools)")
-
-            credential = get_shared_credential()
-            async with azure_agent_client(
-                self.settings, model, credential, max_iterations=2
-            ) as client:
-                agent = client.create_agent(
-                    name="SQLFormatter",
-                    instructions=system_prompt,
-                    tools=None,
-                    max_tokens=executor_max_tokens,
-                    temperature=executor_temperature,
-                )
-                result_model = await run_agent_with_format(
-                    agent, user_message, response_format=SQLExecutionResult
-                )
-
-            if isinstance(result_model, SQLExecutionResult):
-                return result_model.model_dump()
-
-            logger.error("SQL formatter returned unexpected raw text instead of SQLExecutionResult")
-            return {
-                "resultados": [],
-                "total_filas": 0,
-                "resumen": "Error formatting SQL results: unexpected raw text response",
-                "insights": None,
-            }
+            return SQLExecutionResult.success(resultados, row_count).to_dict()
 
         except Exception as e:
             logger.error(f"SQL execution error: {e}", exc_info=True)
-            return {
-                "resultados": [],
-                "total_filas": 0,
-                "resumen": f"Error executing SQL: {str(e)}",
-                "insights": None,
-            }
+            return SQLExecutionResult.error(f"Error executing SQL: {e}").to_dict()
+
+    async def _execute_with_retry(self, sql: str, mcp: Any | None) -> dict[str, Any]:
+        """Execute SQL with retry logic for transient failures."""
+
+        async def _execute_once() -> dict[str, Any]:
+            if mcp is None:
+                async with MCPClient(self.settings) as mcp_client:
+                    result = await mcp_client.execute_sql(sql)
+            else:
+                mcp_client = MCPClient.from_connection(mcp)
+                result = await mcp_client.execute_sql(sql)
+
+            error_msg = str(result.get("error") or "").lower()
+            if "login timeout" in error_msg or "timeout expired" in error_msg:
+                raise TimeoutError(f"SQL Connection Timeout: {result['error']}")
+
+            return result
+
+        logger.info("Executing SQL query via MCP")
+        return await run_with_retry(
+            _execute_once,
+            max_retries=3,
+            initial_delay=2.0,
+            backoff_factor=2.0,
+        )

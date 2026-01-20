@@ -11,152 +11,165 @@ from typing import Any
 # =============================================================================
 
 
-def build_triage_system_prompt(has_context: bool = False) -> str:
+def build_triage_system_prompt(
+    has_context: bool = False,
+    context_summary: str | None = None,
+) -> str:
     """Build system prompt for triage agent.
-    
+
     Args:
         has_context: Whether the user has previous conversation data available.
-        
+        context_summary: Summary of data available in context (from ConversationContext.get_summary())
+
     Returns:
         System prompt string for the triage classifier.
     """
-
     valid_query_types = ", ".join([f'"{qt.value}"' for qt in QueryType])
-
     tables_list = ", ".join(get_all_table_names())
 
+    # Build context data section if available
+    context_data_section = ""
+    if has_context and context_summary:
+        context_data_section = f"""
+## DATOS YA DISPONIBLES EN CONTEXTO
+El usuario tiene datos de una consulta anterior:
+```
+{context_summary}
+```
+
+**REGLA IMPORTANTE**: Si la pregunta del usuario puede responderse con estos datos
+(menciona entidades, valores o columnas que aparecen arriba), clasifica como **{QueryType.FOLLOW_UP.value}**.
+Esto aplica incluso si la pregunta esta en otro idioma (ingles, etc.).
+
+"""
+
+    # Build context-aware categories
     context_categories = ""
     if has_context:
-        context_categories = (
-            f"4. **{QueryType.FOLLOW_UP.value}**: Asks about the previous response or results (ONLY when previous context exists). "
-            "   - Questions about WHY something happened or what it means. "
-            '   - Examples: "¿Por qué?", "¿Por qué es tan alta?", "¿A qué se debe?", "Explícame eso", "No entiendo". '
-            ""
-            f"5. **{QueryType.VIZ_REQUEST.value}**: Requests to visualize or change chart type (ONLY when previous data exists). "
-            "   - Asks to graph existing data or change visualization type. "
-            '   - Examples: "Grafícalo", "Muéstrame en gráfico", "Ahora en barras", "Mejor en pie", "En línea de tiempo". '
-            ""
-        )
+        context_categories = f"""
+4. **{QueryType.FOLLOW_UP.value}**: Preguntas sobre los datos anteriores (SOLO cuando hay contexto previo).
+   - Pregunta por valores especificos de los datos ya disponibles.
+   - Pide filtrar, comparar o explicar datos anteriores.
+   - Pregunta "por que?" o pide explicacion sobre resultados previos.
+   - Ejemplos: "Cual fue el de Davivienda?", "Y en octubre?", "Por que?", "El mayor", "What about Bancolombia?"
 
+5. **{QueryType.VIZ_REQUEST.value}**: Solicita visualizar o cambiar tipo de grafica (SOLO cuando hay datos previos).
+   - Pide graficar datos existentes o cambiar visualizacion.
+   - Ejemplos: "Graficalo", "En barras", "Show me a chart", "Mejor en pie".
+"""
+
+    # Build context-aware rules
     context_rules = ""
     if has_context:
-        context_rules = (
-            f"- If asks 'why?' or requests explanation about previous data -> **{QueryType.FOLLOW_UP.value}** "
-            f"- If asks to graph or change chart type -> **{QueryType.VIZ_REQUEST.value}** "
-        )
+        context_rules = f"""
+- Si pregunta por valores que EXISTEN en el contexto previo -> **{QueryType.FOLLOW_UP.value}**
+- Si pregunta "por que?" sobre datos anteriores -> **{QueryType.FOLLOW_UP.value}**
+- Si pide graficar o cambiar visualizacion -> **{QueryType.VIZ_REQUEST.value}**
+"""
     else:
-        context_rules = (
-            f"- If asks 'why?' but NO previous context exists -> **{QueryType.GENERAL.value}** "
-            f"- If asks to graph but NO previous data exists -> **{QueryType.GENERAL.value}** "
-        )
+        context_rules = f"""
+- Si pregunta "por que?" pero NO hay contexto -> **{QueryType.GENERAL.value}**
+- Si pide graficar pero NO hay datos -> **{QueryType.GENERAL.value}**
+"""
 
-    prompt = (
-        f"Classify a user's question into one of the available categories: {valid_query_types}. "
-        ""
-        "## Context "
-        ""
-        f"Previous conversation with data exists: **{'YES' if has_context else 'NO'}** "
-        ""
-        "## Categories "
-        ""
-        f"1. **{QueryType.GREETING.value}**: Greetings, farewells, or thank you messages. "
-        "   - Social conversation starters or enders. "
-        '   - Examples: "Hola", "Buenos días", "Gracias", "Muchas gracias", "Chao", "Adiós", "¿Cómo estás?". '
-        ""
-        f"2. **{QueryType.DATA_QUESTION.value}**: Asks for specific information, metrics, comparisons, OR projections/simulations based on SuperDB data. "
-        "   - Requires querying the database AND/OR performing calculations/projections based on that data. "
-        '   - INCLUDES: Point-in-time queries (e.g., "Current balance"). '
-        '   - INCLUDES: Trends & comparisons (e.g., "Compare branches"). '
-        '   - INCLUDES: **What-if scenarios & Simulations** (e.g., "If interest rates increase by 2%...", "If customers double..."). '
-        "   - Examples: "
-        '     "¿Cuál es el saldo total de la cartera del sistema financiero a la última fecha de corte?", '
-        '     "¿Cómo ha evolucionado la cartera de consumo en el último año?", '
-        '     "¿Qué participación tiene cada entidad en el saldo total de cartera del sistema?", '
-        '     "¿Cómo se comparan las tasas de captación entre bancos y compañías de financiamiento?", '
-        '     "¿Qué tan concentrada está la cartera del sistema en las principales entidades?", '
-        '     "Si las tasas de captación aumentan 100 puntos básicos, ¿cuál podría ser el impacto en el volumen captado del sistema?", '
-        '     "Proyecta el saldo total de la cartera del sistema para los próximos 12 meses". '
-        ""
-        f"3. **{QueryType.GENERAL.value}**: Seeks purely theoretical explanations, definitions of terms WITHOUT requiring specific data calculation. "
-        "   - Does NOT require database data. "
-        '   - Examples: "¿Qué es un préstamo hipotecario?" (Definition), "Explica cómo funciona el interés compuesto" (Explanation). '
-        ""
-        f"{context_categories}"
-        f"6. **{QueryType.OUT_OF_SCOPE.value}**: Not related to financial services, banking domain, or system capabilities. "
-        '   - Examples: "¿Qué clima hace?", "Receta de cocina", "Fútbol". '
-        ""
-        "## Instructions "
-        ""
-        "1. Analyze the user question for key phrases and intent. "
-        "2. **CRITICAL**: Greetings (Hola, Gracias, Chao) should ALWAYS be classified as **greeting**, not general. "
-        f"3. **CRITICAL**: If asking 'why?' or 'explain' AND previous context exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.FOLLOW_UP.value if has_context else QueryType.GENERAL.value}**. "
-        f"4. **CRITICAL**: If asking to graph/visualize AND previous data exists ({'YES' if has_context else 'NO'}), classify as **{QueryType.VIZ_REQUEST.value if has_context else QueryType.GENERAL.value}**. "
-        "5. If the question asks for a projection, simulation, or impact analysis ('What if...', 'Si pasa X...'), verify if it relates to financial concepts. If yes, classify as **data_question**. "
-        "6. Eliminate non-fitting categories and choose one. "
-        "7. Return analysis in `<analysis>` tags (max 4 sentences, in Spanish). "
-        "8. Return classification JSON in `<classification>` tags. "
-        ""
-        "## Classification Priority "
-        ""
-        f"1. Greetings/farewells/thanks -> **{QueryType.GREETING.value}** "
-        f"{context_rules}"
-        f"- Specific data queries -> **{QueryType.DATA_QUESTION.value}** "
-        f"- Definitions/concepts -> **{QueryType.GENERAL.value}** "
-        f"- Non-financial topics -> **{QueryType.OUT_OF_SCOPE.value}** "
-        ""
-        "## Output Format "
-        ""
-        "<analysis> "
-        "[Your reasoning here - why this category fits, max 4 sentences, in Spanish] "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.GREETING.value}" | "{QueryType.DATA_QUESTION.value}" | "{QueryType.FOLLOW_UP.value}" | "{QueryType.VIZ_REQUEST.value}" | "{QueryType.GENERAL.value}" | "{QueryType.OUT_OF_SCOPE.value}", '
-        '  "reasoning": "Brief explanation in Spanish" '
-        "} "
-        "</classification> "
-        ""
-        "## Examples "
-        ""
-        'User: "Hola" '
-        ""
-        "<analysis> "
-        "El usuario envía un saludo simple. No requiere datos ni procesamiento. "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.GREETING.value}", '
-        '  "reasoning": "Saludo social, no requiere consulta de datos." '
-        "} "
-        "</classification> "
-        ""
-        'User: "Si aumentamos los clientes en un 10%, ¿cómo afecta el saldo total?" '
-        ""
-        "<analysis> "
-        "La pregunta plantea un escenario hipotético ('Si aumentamos...') sobre métricas financieras ('clientes', 'saldo total'). Requiere datos base para calcular el impacto. "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.DATA_QUESTION.value}", '
-        '  "reasoning": "Requiere datos base de clientes y saldos para proyectar el escenario hipotético." '
-        "} "
-        "</classification> "
-        ""
-        "## Edge Cases "
-        ""
-        "- If no user question is provided: "
-        "<analysis> "
-        "El campo de la pregunta del usuario está vacío. "
-        "</analysis> "
-        "<classification> "
-        "{ "
-        f'  "query_type": "{QueryType.OUT_OF_SCOPE.value}", '
-        '  "reasoning": "No se proporcionó ninguna pregunta." '
-        "} "
-        "</classification> "
-        ""
-        f"- If ambiguous (e.g., 'Tell me about loans'), prefer {QueryType.DATA_QUESTION.value}. "
-    )
+    prompt = f"""Clasifica la pregunta del usuario en una de las categorias disponibles: {valid_query_types}.
+
+## Contexto de Conversacion
+Existe conversacion previa con datos: **{'Si' if has_context else 'NO'}**
+{context_data_section}
+## Categorias
+
+1. **{QueryType.GREETING.value}**: Saludos, despedidas o agradecimientos.
+   - Conversacion social.
+   - Ejemplos: "Hola", "Buenos dias", "Gracias", "Chao", "Hi", "Thanks".
+
+2. **{QueryType.DATA_QUESTION.value}**: Pide informacion, metricas o comparaciones que requieren NUEVA consulta a la base de datos.
+   - Involucra metricas financieras (saldos, tasas, carteras, mora).
+   - Compara entidades, periodos, productos.
+   - Requiere datos que NO estan en el contexto previo.
+   - Tablas disponibles: {tables_list}.
+   - Ejemplos: "Cual es la tasa de mora?", "Compara bancos por saldo", "Show me rates for 2024".
+
+3. **{QueryType.GENERAL.value}**: Preguntas sobre conceptos financieros o que Delfos no puede responder.
+   - Definiciones o explicaciones de terminos.
+   - Ejemplos: "Que es un CDT?", "Como funciona una tasa de interes?", "What is a loan?".
+{context_categories}
+6. **{QueryType.OUT_OF_SCOPE.value}**: Preguntas no relacionadas con finanzas o analisis de datos.
+   - Temas fuera del dominio de Delfos.
+   - Ejemplos: "Que hora es?", "What's the weather?", "Quien gano el partido?".
+
+## Reglas de Clasificacion
+
+1. Primero verifica si es saludo/despedida/agradecimiento -> **{QueryType.GREETING.value}**
+2. **CRITICO**: Si hay contexto previo ({'Si' if has_context else 'NO'}) Y la pregunta se refiere a datos que YA EXISTEN en ese contexto, clasifica como **{QueryType.FOLLOW_UP.value}**
+{context_rules}
+3. Si requiere datos NUEVOS de la base de datos -> **{QueryType.DATA_QUESTION.value}**
+4. Si es definicion o concepto -> **{QueryType.GENERAL.value}**
+5. Si no es sobre finanzas -> **{QueryType.OUT_OF_SCOPE.value}**
+
+## Formato de Respuesta
+
+<analysis>
+[Tu razonamiento aqui - maximo 3 oraciones en espanol]
+</analysis>
+<classification>
+{{
+  "query_type": "{QueryType.GREETING.value}" | "{QueryType.DATA_QUESTION.value}" | "{QueryType.FOLLOW_UP.value}" | "{QueryType.VIZ_REQUEST.value}" | "{QueryType.GENERAL.value}" | "{QueryType.OUT_OF_SCOPE.value}",
+  "reasoning": "Explicacion breve en espanol"
+}}
+</classification>
+
+## Ejemplos
+
+User: "Hola"
+<analysis>
+Saludo simple, no requiere datos.
+</analysis>
+<classification>
+{{
+  "query_type": "{QueryType.GREETING.value}",
+  "reasoning": "Saludo social."
+}}
+</classification>
+
+User: "Cual es la cartera total de los bancos en 2024?"
+<analysis>
+Pregunta por datos especificos que requieren consulta a la base de datos.
+</analysis>
+<classification>
+{{
+  "query_type": "{QueryType.DATA_QUESTION.value}",
+  "reasoning": "Requiere consultar datos de cartera bancaria."
+}}
+</classification>
+"""
+
+    # Add follow-up example only when context exists
+    if has_context:
+        prompt += f"""
+User: "Y el de Davivienda?" (cuando el contexto tiene datos de varios bancos incluyendo Davivienda)
+<analysis>
+El usuario pregunta por un valor especifico (Davivienda) que ya existe en los datos del contexto. No necesita nueva consulta.
+</analysis>
+<classification>
+{{
+  "query_type": "{QueryType.FOLLOW_UP.value}",
+  "reasoning": "Pregunta por datos que ya estan disponibles en el contexto anterior."
+}}
+</classification>
+
+User: "What was the balance in July?" (cuando el contexto tiene datos con Mes: 7, 8, 9, 10)
+<analysis>
+El usuario pregunta en ingles por "July" (mes 7) que existe en el contexto. El idioma no importa, los datos estan disponibles.
+</analysis>
+<classification>
+{{
+  "query_type": "{QueryType.FOLLOW_UP.value}",
+  "reasoning": "July = mes 7, que existe en el contexto previo."
+}}
+</classification>
+"""
+
     return prompt
 
 # =============================================================================
@@ -815,7 +828,7 @@ def build_viz_prompt() -> str:
         "### Step 1: Call insert_agent_output_batch "
         "Call this tool with the following parameters: "
         '- `user_id`: Use the `user_id` value from the input JSON you received. This is the actual user making the request. Do not use a hardcoded value like "api_user". '
-        "- `question`: The original user question from the input (use `sql_results.pregunta_original` or `original_question`) "
+        "- `question`: The original user question from the input (`original_question`) "
         "- `results`: Your formatted array of data points "
         "- `metric_name`: A clear, descriptive name for what you're measuring "
         "- `visual_hint`: The visualization type - use 'linea' for time series (Pattern A), 'barras' for categorical (Pattern B), 'pie' for distribution "

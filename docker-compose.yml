@@ -30,12 +30,4 @@ services:
       - database_connection_string=${database_connection_string}
     volumes:
       - ./logs:/app/logs
-<<<<<<< HEAD
-<<<<<<< HEAD
     restart: unless-stopped
-=======
-    restart: unless-stopped
->>>>>>> origin/main
-=======
-    restart: unless-stopped
->>>>>>> azure/main

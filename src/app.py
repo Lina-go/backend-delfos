@@ -1,25 +1,24 @@
 """FastAPI application entry point."""
 
 import logging
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.router import router
 from src.config.settings import get_settings
+from src.infrastructure.database.connection import ConnectionPool
 from src.infrastructure.llm.factory import close_shared_credential
+from src.infrastructure.logging.logger import setup_logging
 
 settings = get_settings()
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# Configure structured logging
+# Use JSON format in production (DEBUG=false), console format in development
+setup_logging(
+    level=settings.log_level,
+    json_output=not settings.debug,
+    silence_noisy_loggers=True,
 )
-
-# Silence verbose loggers
-for logger_name in ["uvicorn", "httpx", "httpcore", "azure", "azure.core"]:
-    logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +51,14 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Cleanup on shutdown."""
     logger.info("Shutting down Delfos NL2SQL Pipeline")
+
+    # Close database connection pool
+    try:
+        ConnectionPool.close_pool()
+        logger.info("Database connection pool closed")
+    except Exception as e:
+        logger.error(f"Error closing connection pool: {e}", exc_info=True)
+
     # Close shared credential
     try:
         await close_shared_credential()

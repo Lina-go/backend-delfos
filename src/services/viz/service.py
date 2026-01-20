@@ -32,6 +32,7 @@ class VisualizationService:
         tablas: list[str] | None = None,
         resumen: str | None = "",
         chart_type: str | None = None,
+        mcp: Any | None = None,
     ) -> dict[str, Any]:
         """
         Generate visualization for SQL results.
@@ -40,12 +41,7 @@ class VisualizationService:
             viz_input = {
                 "user_id": user_id,
                 "sql_results": {
-                    "pregunta_original": question,
-                    "sql": sql_query or "",
-                    "tablas": tablas or [],
                     "resultados": sql_results,
-                    "total_filas": len(sql_results),
-                    "resumen": resumen or "",
                 },
                 "original_question": question,
                 "tipo_grafico": chart_type,
@@ -60,27 +56,40 @@ class VisualizationService:
 
             credential = get_shared_credential()
 
-            async with (
-                azure_agent_client(
-                    self.settings,
-                    model,
-                    credential,  # max_iterations=2
-                ) as client,
-                mcp_connection(self.settings) as mcp,
-            ):
-                agent = client.create_agent(
-                    name="VisualizationService",
-                    instructions=system_prompt,
-                    tools=[mcp],
-                    max_tokens=viz_max_tokens,
-                    temperature=viz_temperature,
-                )
+            async with azure_agent_client(
+                self.settings,
+                model,
+                credential,  # max_iterations=2
+            ) as client:
+                if mcp is None:
+                    async with mcp_connection(self.settings) as mcp_tool:
+                        agent = client.create_agent(
+                            name="VisualizationService",
+                            instructions=system_prompt,
+                            tools=[mcp_tool],
+                            max_tokens=viz_max_tokens,
+                            temperature=viz_temperature,
+                        )
 
-                result_model = await run_agent_with_format(
-                    agent,
-                    input_str,
-                    response_format=VizResult,
-                )
+                        result_model = await run_agent_with_format(
+                            agent,
+                            input_str,
+                            response_format=VizResult,
+                        )
+                else:
+                    agent = client.create_agent(
+                        name="VisualizationService",
+                        instructions=system_prompt,
+                        tools=[mcp],
+                        max_tokens=viz_max_tokens,
+                        temperature=viz_temperature,
+                    )
+
+                    result_model = await run_agent_with_format(
+                        agent,
+                        input_str,
+                        response_format=VizResult,
+                    )
 
             if isinstance(result_model, VizResult):
                 data = result_model.model_dump()
