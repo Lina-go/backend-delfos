@@ -482,7 +482,7 @@ class PipelineOrchestrator:
                 )
 
     async def _step_visualization(
-        self, state: PipelineState, message: str, mcp: Any | None = None
+        self, state: PipelineState, message: str
     ) -> dict[str, Any] | None:
         """Execute visualization step."""
         if not (state.viz_required and state.sql_results):
@@ -517,7 +517,6 @@ class PipelineOrchestrator:
             tablas=state.selected_tables,
             resumen=state.sql_resumen,
             chart_type=state.tipo_grafico,
-            mcp=mcp,
         )
         execution_time = (time.time() - start_time) * 1000
         state.powerbi_url = viz_result.get("powerbi_url")
@@ -755,7 +754,7 @@ class PipelineOrchestrator:
                     )
 
             # Step 7: VISUALIZATION
-            viz_result = await self._step_visualization(state, message, mcp=mcp)
+            viz_result = await self._step_visualization(state, message)
 
             # Step 8: GRAPH
             if viz_result:
@@ -940,7 +939,7 @@ class PipelineOrchestrator:
                     return
 
             # Step 7: VISUALIZATION
-            viz_result = await self._step_visualization(state, message, mcp=mcp)
+            viz_result = await self._step_visualization(state, message)
             if viz_result:
                 yield {
                     "step": "visualization",

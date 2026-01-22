@@ -51,7 +51,7 @@ async def mcp_connection(
 
 
 # =============================================================================
-# MCP Client (para llamadas directas - SQL Execution)
+# MCP Client
 # =============================================================================
 
 
@@ -86,10 +86,10 @@ class MCPClient:
             await self.connect()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
-        """Exit context manager - close connection."""
+    async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> bool:
+        """Exit context manager - close connection."""  
         await self.close()
-        return False  # Don't suppress exceptions
+        return False
 
     @classmethod
     def from_connection(cls, mcp: MCPStreamableHTTPTool) -> "MCPClient":
@@ -300,6 +300,67 @@ class MCPClient:
             raise ToolExecutionException(
                 f"Failed to execute SQL: {str(e)}", inner_exception=e
             ) from e
+    
+    async def insert_agent_output_batch(
+        self,
+        user_id: str,
+        question: str,
+        results: list[dict[str, Any]],
+        metric_name: str,
+        visual_hint: str,
+    ) -> str:
+        """
+        Insert visualization data into agent_output table.
+        
+        Returns:
+            str: The run_id generated for this batch
+        """
+        await self._ensure_connected()
+        if self._mcp is None:
+            raise RuntimeError("MCP connection is not established")
+
+        logger.debug(f"Inserting {len(results)} data points for user {user_id}")
+        
+        result = await self._mcp.call_tool(
+            "insert_agent_output_batch",
+            user_id=user_id,
+            question=question,
+            results=results,
+            metric_name=metric_name,
+            visual_hint=visual_hint,
+        )
+        
+        run_id = self._extract_text_content(result)
+        logger.info(f"Successfully inserted batch with run_id: {run_id}")
+        return run_id
+
+
+    async def generate_powerbi_url(
+        self,
+        run_id: str,
+        visual_hint: str,
+    ) -> str:
+        """
+        Generate Power BI URL for visualization.
+        
+        Returns:
+            str: Complete Power BI URL
+        """
+        await self._ensure_connected()
+        if self._mcp is None:
+            raise RuntimeError("MCP connection is not established")
+
+        logger.debug(f"Generating Power BI URL for run_id: {run_id}")
+        
+        result = await self._mcp.call_tool(
+            "generate_powerbi_url",
+            run_id=run_id,
+            visual_hint=visual_hint,
+        )
+        
+        powerbi_url = self._extract_text_content(result)
+        logger.info(f"Generated Power BI URL for run_id {run_id}")
+        return powerbi_url
 
     async def close(self) -> None:
         """Close MCP connection (only if we own it)."""
