@@ -5,6 +5,7 @@ from typing import Any
 
 from src.config.settings import Settings
 from src.infrastructure.cache.schema_cache import SchemaCache
+from src.infrastructure.database import DelfosTools
 from src.infrastructure.mcp.client import MCPClient
 from src.services.schema.table_selector import TableSelector
 
@@ -28,13 +29,18 @@ class SchemaService:
         pass
 
     async def get_schema_context(
-        self, message: str, mcp: Any | None = None
+        self,
+        message: str,
+        mcp: Any | None = None,
+        db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
         """
         Get schema context for SQL generation.
 
         Args:
             message: User's natural language question
+            mcp: Optional MCP connection
+            db_tools: Optional DelfosTools instance for direct DB access
 
         Returns:
             Dictionary with tables array:
@@ -46,24 +52,25 @@ class SchemaService:
             # Select relevant tables
             tables = await self.table_selector.select_tables(message)
 
-            # Get schema for each table using context manager
+            # Get schema for each table
             schema_info = {}
-            if mcp is None:
-                async with MCPClient(self.settings) as mcp_client:
-                    for table in tables:
-                        cache_key = f"schema_{table}"
-                        cached = SchemaCache.get(cache_key)
 
-                        if cached:
-                            schema_info[table] = cached
-                            logger.debug(f"Using cached schema for {table}")
-                        else:
-                            # Fetch schema from MCP
-                            table_schema = await mcp_client.get_table_schema(table)
-                            schema_info[table] = table_schema
-                            SchemaCache.set(cache_key, table_schema)
-                            logger.debug(f"Fetched and cached schema for {table}")
-            else:
+            if db_tools is not None:
+                # Use direct database access
+                for table in tables:
+                    cache_key = f"schema_{table}"
+                    cached = SchemaCache.get(cache_key)
+
+                    if cached:
+                        schema_info[table] = cached
+                        logger.debug(f"Using cached schema for {table}")
+                    else:
+                        table_schema = db_tools.get_schema(table)
+                        schema_info[table] = table_schema
+                        SchemaCache.set(cache_key, table_schema)
+                        logger.debug(f"Fetched and cached schema for {table} (direct DB)")
+            elif mcp is not None:
+                # Use existing MCP connection
                 mcp_client = MCPClient.from_connection(mcp)
                 for table in tables:
                     cache_key = f"schema_{table}"
@@ -77,6 +84,21 @@ class SchemaService:
                         schema_info[table] = table_schema
                         SchemaCache.set(cache_key, table_schema)
                         logger.debug(f"Fetched and cached schema for {table}")
+            else:
+                # Create new MCP connection
+                async with MCPClient(self.settings) as mcp_client:
+                    for table in tables:
+                        cache_key = f"schema_{table}"
+                        cached = SchemaCache.get(cache_key)
+
+                        if cached:
+                            schema_info[table] = cached
+                            logger.debug(f"Using cached schema for {table}")
+                        else:
+                            table_schema = await mcp_client.get_table_schema(table)
+                            schema_info[table] = table_schema
+                            SchemaCache.set(cache_key, table_schema)
+                            logger.debug(f"Fetched and cached schema for {table}")
 
             return {
                 "tables": tables,

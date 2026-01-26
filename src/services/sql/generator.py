@@ -10,6 +10,7 @@ from src.config.prompts import (
 )
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
+from src.infrastructure.database import DelfosTools
 from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import (
     azure_agent_client,
@@ -58,6 +59,7 @@ class SQLGenerator:
         previous_errors: list[str] | None = None,
         previous_sql: str | None = None,
         mcp: Any | None = None,
+        db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
         """
         Generate SQL query from natural language.
@@ -70,6 +72,8 @@ class SQLGenerator:
             arquetipo: Optional archetype (A-N)
             previous_errors: Optional list of validation errors from previous attempt
             previous_sql: Optional SQL query from previous attempt that failed
+            mcp: Optional MCP connection
+            db_tools: Optional DelfosTools instance for direct DB access
 
         Returns:
             Dictionary with SQL query and metadata
@@ -118,6 +122,16 @@ class SQLGenerator:
                 "get_primary_keys",
             ]
 
+            # Determine which tools to use
+            if db_tools is not None:
+                agent_tools = db_tools.get_exploration_tools()
+                logger.info("Using direct DB tools for SQL generation")
+            elif mcp is not None:
+                agent_tools = mcp
+                logger.info("Using provided MCP connection for SQL generation")
+            else:
+                agent_tools = None  # Will create MCP connection below
+
             if is_anthropic_model(model):
                 if self.settings.use_anthropic_api_for_claude:
                     if not self.settings.anthropic_api_key:
@@ -125,7 +139,20 @@ class SQLGenerator:
                             "use_anthropic_api_for_claude is True but ANTHROPIC_API_KEY is not set"
                         )
                     logger.info(f"Using Anthropic API directly for Claude model: {model}")
-                    if mcp is None:
+                    if agent_tools is not None:
+                        agent = create_anthropic_agent(
+                            settings=self.settings,
+                            name="SQLGenerator",
+                            instructions=system_prompt,
+                            tools=agent_tools,
+                            model=model,
+                            max_tokens=sql_max_tokens,
+                            response_format=SQLResult,
+                        )
+                        result_model = await run_agent_with_format(
+                            agent, user_input, response_format=SQLResult
+                        )
+                    else:
                         async with mcp_connection(
                             self.settings, allowed_tools=exploration_tools
                         ) as mcp_tool:
@@ -141,12 +168,14 @@ class SQLGenerator:
                             result_model = await run_agent_with_format(
                                 agent, user_input, response_format=SQLResult
                             )
-                    else:
-                        agent = create_anthropic_agent(
+                else:
+                    logger.info(f"Using Anthropic on Foundry for Claude model: {model}")
+                    if agent_tools is not None:
+                        agent = create_anthropic_foundry_agent(
                             settings=self.settings,
                             name="SQLGenerator",
                             instructions=system_prompt,
-                            tools=mcp,
+                            tools=agent_tools,
                             model=model,
                             max_tokens=sql_max_tokens,
                             response_format=SQLResult,
@@ -154,9 +183,7 @@ class SQLGenerator:
                         result_model = await run_agent_with_format(
                             agent, user_input, response_format=SQLResult
                         )
-                else:
-                    logger.info(f"Using Anthropic on Foundry for Claude model: {model}")
-                    if mcp is None:
+                    else:
                         async with mcp_connection(
                             self.settings, allowed_tools=exploration_tools
                         ) as mcp_tool:
@@ -172,23 +199,22 @@ class SQLGenerator:
                             result_model = await run_agent_with_format(
                                 agent, user_input, response_format=SQLResult
                             )
-                    else:
-                        agent = create_anthropic_foundry_agent(
-                            settings=self.settings,
+            else:
+                credential = get_shared_credential()
+                async with azure_agent_client(self.settings, model, credential) as client:
+                    if agent_tools is not None:
+                        agent = client.create_agent(
                             name="SQLGenerator",
                             instructions=system_prompt,
-                            tools=mcp,
-                            model=model,
+                            tools=agent_tools,
                             max_tokens=sql_max_tokens,
+                            temperature=self.settings.sql_temperature,
                             response_format=SQLResult,
                         )
                         result_model = await run_agent_with_format(
                             agent, user_input, response_format=SQLResult
                         )
-            else:
-                credential = get_shared_credential()
-                async with azure_agent_client(self.settings, model, credential) as client:
-                    if mcp is None:
+                    else:
                         async with mcp_connection(
                             self.settings, allowed_tools=exploration_tools
                         ) as mcp_tool:
@@ -203,18 +229,6 @@ class SQLGenerator:
                             result_model = await run_agent_with_format(
                                 agent, user_input, response_format=SQLResult
                             )
-                    else:
-                        agent = client.create_agent(
-                            name="SQLGenerator",
-                            instructions=system_prompt,
-                            tools=mcp,
-                            max_tokens=sql_max_tokens,
-                            temperature=self.settings.sql_temperature,
-                            response_format=SQLResult,
-                        )
-                        result_model = await run_agent_with_format(
-                            agent, user_input, response_format=SQLResult
-                        )
 
             if isinstance(result_model, SQLResult):
                 result_dict = result_model.model_dump()

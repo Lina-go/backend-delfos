@@ -177,6 +177,11 @@ class Settings(BaseSettings):
     database_schema: str = "dbo"
     database_connection_string: str = ""
 
+    ######################################
+    # Direct database access (bypass MCP)
+    ######################################
+    use_direct_db: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

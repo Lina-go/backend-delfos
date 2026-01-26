@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from src.config.prompts import build_viz_prompt
 from src.config.settings import Settings
+from src.infrastructure.database import DelfosTools
 from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import azure_agent_client, get_shared_credential
 from src.infrastructure.mcp.client import MCPClient
@@ -19,9 +20,15 @@ logger = logging.getLogger(__name__)
 class VisualizationService:
     """Orchestrates visualization flow."""
 
-    def __init__(self, settings: Settings):
-        """Initialize visualization service."""
+    def __init__(self, settings: Settings, db_tools: DelfosTools | None = None):
+        """Initialize visualization service.
+
+        Args:
+            settings: Application settings
+            db_tools: Optional DelfosTools instance for direct DB access
+        """
         self.settings = settings
+        self.db_tools = db_tools
 
     async def generate(
         self,
@@ -78,22 +85,41 @@ class VisualizationService:
             run_id = None
             powerbi_url = None
 
-            async with MCPClient(self.settings) as mcp_client:
-                run_id = await mcp_client.insert_agent_output_batch(
+            if self.db_tools is not None:
+                # Use direct database access
+                run_id = self.db_tools.insert_agent_output_batch(
                     user_id=user_id,
                     question=question,
                     results=formatting_result.data_points,
                     metric_name=formatting_result.metric_name,
                     visual_hint=chart_type or "barras",
                 )
-                logger.info(f"insert_agent_output_batch returned run_id: {run_id}")
+                logger.info(f"insert_agent_output_batch (direct DB) returned run_id: {run_id}")
 
                 if run_id:
-                    powerbi_url = await mcp_client.generate_powerbi_url(
+                    powerbi_url = self.db_tools.generate_powerbi_url(
                         run_id=run_id,
                         visual_hint=chart_type or "barras",
                     )
-                    logger.info(f"generate_powerbi_url returned URL")
+                    logger.info("generate_powerbi_url (direct DB) returned URL")
+            else:
+                # Use MCP
+                async with MCPClient(self.settings) as mcp_client:
+                    run_id = await mcp_client.insert_agent_output_batch(
+                        user_id=user_id,
+                        question=question,
+                        results=formatting_result.data_points,
+                        metric_name=formatting_result.metric_name,
+                        visual_hint=chart_type or "barras",
+                    )
+                    logger.info(f"insert_agent_output_batch returned run_id: {run_id}")
+
+                    if run_id:
+                        powerbi_url = await mcp_client.generate_powerbi_url(
+                            run_id=run_id,
+                            visual_hint=chart_type or "barras",
+                        )
+                        logger.info("generate_powerbi_url returned URL")
 
             data = {
                 "tipo_grafico": chart_type,

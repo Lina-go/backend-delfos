@@ -5,6 +5,7 @@ from typing import Any
 
 from src.config.prompts import build_triage_system_prompt
 from src.config.settings import Settings
+from src.infrastructure.database import DelfosTools
 from src.infrastructure.llm.executor import run_single_agent
 from src.infrastructure.llm.factory import (
     azure_agent_client,
@@ -29,6 +30,7 @@ class TriageClassifier:
         has_context: bool = False,
         context_summary: str | None = None,
         mcp: Any | None = None,
+        db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
         """
         Classify a user message.
@@ -37,6 +39,8 @@ class TriageClassifier:
             message: User's natural language question
             has_context: Whether the user has previous conversation data
             context_summary: Summary of what data is available in context
+            mcp: Optional MCP connection
+            db_tools: Optional DelfosTools instance for direct DB access
 
         Returns:
             Dictionary with query_type and reasoning
@@ -48,11 +52,29 @@ class TriageClassifier:
             )
             model = self.settings.triage_agent_model
 
+            # Determine which tools to use
+            if db_tools is not None:
+                agent_tools = db_tools.get_exploration_tools()
+                logger.info("Using direct DB tools for triage")
+            elif mcp is not None:
+                agent_tools = mcp
+            else:
+                agent_tools = None  # Will create MCP connection below
+
             credential = get_shared_credential()
             async with azure_agent_client(
                 self.settings, model, credential, max_iterations=5
             ) as client:
-                if mcp is None:
+                if agent_tools is not None:
+                    agent = client.create_agent(
+                        name="TriageClassifier",
+                        instructions=system_prompt,
+                        tools=agent_tools,
+                        max_tokens=self.settings.triage_max_tokens,
+                        temperature=self.settings.triage_temperature,
+                    )
+                    response = await run_single_agent(agent, message)
+                else:
                     async with mcp_connection(self.settings) as mcp_tool:
                         agent = client.create_agent(
                             name="TriageClassifier",
@@ -62,15 +84,6 @@ class TriageClassifier:
                             temperature=self.settings.triage_temperature,
                         )
                         response = await run_single_agent(agent, message)
-                else:
-                    agent = client.create_agent(
-                        name="TriageClassifier",
-                        instructions=system_prompt,
-                        tools=mcp,
-                        max_tokens=self.settings.triage_max_tokens,
-                        temperature=self.settings.triage_temperature,
-                    )
-                    response = await run_single_agent(agent, message)
 
             result = JSONParser.extract_json(response)
             return result

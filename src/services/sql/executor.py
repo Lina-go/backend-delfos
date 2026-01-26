@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from src.config.settings import Settings
+from src.infrastructure.database import DelfosTools
 from src.infrastructure.mcp.client import MCPClient
 from src.utils.retry import run_with_retry
 
@@ -25,8 +26,9 @@ _SAFE_EVAL_CONTEXT: dict[str, Any] = {
 
 # Pattern to validate input contains only expected characters
 # Allows: tuples, strings, numbers, Decimal(), datetime.X(), None, True, False
+# Also allows comparison operators < > = that may appear in string data
 _SAFE_INPUT_PATTERN = re.compile(
-    r"^[\(\),\s\w\.'\":\-\+]+$"
+    r"^[\(\),\s\w\.'\":\-\+<>=]+$"
 )
 
 
@@ -291,10 +293,26 @@ class SQLExecutor:
         """Close resources (no-op, connections managed via context manager)."""
         pass
 
-    async def execute(self, sql: str, mcp: Any | None = None) -> dict[str, Any]:
-        """Execute SQL query and return formatted results."""
+    async def execute(
+        self,
+        sql: str,
+        mcp: Any | None = None,
+        db_tools: DelfosTools | None = None,
+    ) -> dict[str, Any]:
+        """Execute SQL query and return formatted results.
+
+        Args:
+            sql: SQL query to execute
+            mcp: Optional MCP connection
+            db_tools: Optional DelfosTools instance for direct DB access
+        """
         try:
-            execution_result = await self._execute_with_retry(sql, mcp)
+            if db_tools is not None:
+                # Use direct database access
+                execution_result = db_tools.execute_sql(sql)
+            else:
+                # Use MCP
+                execution_result = await self._execute_with_retry(sql, mcp)
 
             if error := execution_result.get("error"):
                 logger.error(f"SQL execution error: {error}")
