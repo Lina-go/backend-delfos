@@ -81,3 +81,32 @@ class AddProjectItemRequest(BaseModel):
     user_question: str | None = Field(None, description="User's original question (used as title)")
     title: str | None = None  # Fallback if user_question is not provided
     metadata: dict[str, Any] | None = {}
+
+
+class Graph(BaseModel):
+    """Saved graph from chat."""
+
+    id: str
+    type: str
+    content: str
+    title: str
+    query: str | None = None
+    created_at: datetime | None = None
+    metadata: dict[str, Any] | None = {}
+    user_id: str | None = None
+
+
+class SaveGraphRequest(BaseModel):
+    """Request to save a graph from chat."""
+
+    type: str
+    content: str
+    title: str
+    query: str | None = None
+    metadata: dict[str, Any] | None = {}
+    user_id: str | None = None
+
+class DeleteGraphsRequest(BaseModel):
+    """Request to delete multiple graphs."""
+
+    graph_ids: list[str]
