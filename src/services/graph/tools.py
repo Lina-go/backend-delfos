@@ -49,7 +49,6 @@ def _is_date_like(value: Any) -> bool:
     value = value.strip()
     return bool(re.match(r"^\d{4}-\d{2}(-\d{2})?$", value))
 
-
 def _infer_axis_labels(
     title: str,
     data_points: list[dict[str, Any]],
@@ -79,24 +78,27 @@ def _infer_axis_labels(
         except (TypeError, ValueError):
             continue
 
-    if values and min(values) >= 0 and max(values) <= 1:
+    max_val = max(values) if values else 0
+    min_val = min(values) if values else 0
+    values_are_decimal = min_val >= 0 and max_val <= 1
+
+    if values_are_decimal:
         y_label = "Porcentaje (%)"
-        tickformat = ".0%"
-    elif any(k in lower_title for k in percent_keywords):
-        y_label = "Porcentaje (%)"
-        tickformat = ".1%"
+        tickformat = ".2%"
     elif any(k in lower_title for k in rate_keywords):
         y_label = "Tasa (%)"
-        tickformat = ".2%"
+        tickformat = ".2f"
+    elif any(k in lower_title for k in percent_keywords):
+        y_label = "Porcentaje (%)"
+        tickformat = ".2f"
     elif any(k in lower_title for k in count_keywords):
         y_label = "Cantidad"
-        tickformat = ".3s"
+        tickformat = ",.0f"
     elif any(k in lower_title for k in amount_keywords):
         y_label = "Monto"
         tickformat = ".3s"
 
     return x_label, y_label, tickformat
-
 
 def _render_outputs(fig: go.Figure) -> tuple[bytes, bytes]:
     """Render figure to HTML and PNG bytes.
