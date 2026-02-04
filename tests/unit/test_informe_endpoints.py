@@ -271,3 +271,15 @@ def test_refresh_informe_exception(mock_query, mock_orch_class, client):
     response = client.patch("/api/informes/inf-1/refresh")
     assert response.status_code == 200
     assert len(response.json()["failed"]) == 1
+
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+def test_delete_informes_bulk(mock_insert, client):
+    mock_insert.return_value = {"success": True}
+    response = client.request("DELETE", "/api/informes", json={"informe_ids": ["inf-1", "inf-2"]})
+    assert response.status_code == 200
+    assert response.json()["deleted_count"] == 2
+
+
+def test_delete_informes_bulk_empty(client):
+    response = client.request("DELETE", "/api/informes", json={"informe_ids": []})
+    assert response.status_code == 400

@@ -17,6 +17,7 @@ from src.api.models import (
     ChatResponse,
     CreateProjectRequest,
     DeleteGraphsRequest,
+    DeleteInformesRequest,
     Graph,
     HealthResponse,
     Project,
@@ -683,3 +684,28 @@ async def refresh_informe(
             pass
 
     return {"status": "success", "informe_id": informe_id, "refreshed": refreshed, "failed": failed, "skipped": skipped}
+
+@router.delete("/informes", tags=["informes"])
+async def delete_informes_bulk(
+    request: DeleteInformesRequest,
+    settings: Settings = Depends(get_settings_dependency),
+) -> dict[str, Any]:
+    """Delete multiple informes and their associations."""
+    if not request.informe_ids:
+        raise HTTPException(status_code=400, detail="No informe IDs provided")
+
+    placeholders = ", ".join(["?" for _ in request.informe_ids])
+    await execute_insert(
+        settings,
+        f"DELETE FROM dbo.ProjectItems WHERE projectId IN ({placeholders})",
+        tuple(request.informe_ids),
+    )
+    result = await execute_insert(
+        settings,
+        f"DELETE FROM dbo.Projects WHERE id IN ({placeholders})",
+        tuple(request.informe_ids),
+    )
+    if not result.get("success") or result.get("error"):
+        raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown error')}")
+
+    return {"status": "success", "deleted_count": len(request.informe_ids)}

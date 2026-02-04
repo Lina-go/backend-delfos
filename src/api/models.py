@@ -157,3 +157,6 @@ class AddGraphsToInformeRequest(BaseModel):
     """Request to add one or more graphs to an informe."""
 
     graph_ids: list[str]
+
+class DeleteInformesRequest(BaseModel):
+    informe_ids: list[str]
