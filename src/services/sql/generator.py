@@ -47,7 +47,7 @@ class SQLGenerator:
         if schema_context and schema_context.get("tables"):
             tables = sorted(schema_context.get("tables", []))
         cache_data = f"{normalized_msg}|{','.join(tables)}|{intent or ''}|{pattern_type or ''}"
-        return hashlib.md5(cache_data.encode()).hexdigest()
+        return hashlib.sha256(cache_data.encode()).hexdigest()
 
     async def generate(
         self,
