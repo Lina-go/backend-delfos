@@ -21,13 +21,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: astral-sh/setup-uv@v4
+
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-cov
+        run: uv sync --dev
 
       - name: Run tests with coverage
-        run: pytest --cov=src --cov-report=xml -q
+        run: uv run pytest --cov=src --cov-report=xml -q
 
       - uses: SonarSource/sonarcloud-github-action@e44258b109568baa0df60ed515909fc6c72cba92
         env:
