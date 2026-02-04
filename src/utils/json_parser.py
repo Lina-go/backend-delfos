@@ -73,10 +73,10 @@ class JSONParser:
 
         # PRIORITY 1: Try to find JSON inside <answer> tags first (used by visualization service)
         # This is checked early because <answer> is the expected output format
-        answer_match = re.search(r"<answer>\s*(.*?)\s*</answer>", text, re.DOTALL | re.IGNORECASE)
+        answer_match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL | re.IGNORECASE)
         if not answer_match:
             # Try to match unclosed <answer> tag (for truncated responses)
-            answer_match = re.search(r"<answer>\s*(.*)", text, re.DOTALL | re.IGNORECASE)
+            answer_match = re.search(r"<answer>(.*)", text, re.DOTALL | re.IGNORECASE)
 
         if answer_match:
             answer_content = answer_match.group(1).strip()
@@ -107,7 +107,7 @@ class JSONParser:
 
         # PRIORITY 2: Try to find JSON inside <classification> tags (used by triage)
         classification_match = re.search(
-            r"<classification>\s*(.*?)\s*</classification>", text, re.DOTALL | re.IGNORECASE
+            r"<classification>(.*?)</classification>", text, re.DOTALL | re.IGNORECASE
         )
         if classification_match:
             classification_content = classification_match.group(1).strip()

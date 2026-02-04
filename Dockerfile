@@ -27,12 +27,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files (both pyproject.toml and uv.lock)
-# This allows uv to perform a deterministic install
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies using uv
-# --frozen ensures it uses the exact versions in uv.lock
-# --no-install-project skips installing the actual app code in this step for better caching
 RUN uv sync --frozen --no-install-project --prerelease=allow
 
 # Copy application code
@@ -44,8 +41,15 @@ RUN uv sync --frozen --prerelease=allow
 # Create logs directory
 RUN mkdir -p logs
 
+# Create non-root user and set permissions
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
 # Expose port
 EXPOSE 8000
 
-# Run the application using uv to ensure it uses the synchronized virtual environment
+# Run the application
 CMD ["uv", "run", "uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8000"]

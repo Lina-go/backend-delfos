@@ -95,7 +95,7 @@ async def run_with_retry(
  
             if should_retry and attempt < max_retries - 1:
                 # Try to extract wait time from error message
-                wait_time_match = re.search(r"(\d+)\s*seconds?", str(e), re.IGNORECASE)
+                wait_time_match = re.search(r"(\d+)\s{0,10}seconds?", str(e), re.IGNORECASE)
                 if wait_time_match:
                     wait_time = float(wait_time_match.group(1))
                 else:
