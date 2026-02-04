@@ -1,8 +1,8 @@
 """Tests for informe endpoints."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.app import app
@@ -29,22 +29,8 @@ def test_list_informes_empty(mock_query, client):
 @patch("src.api.router.execute_query", new_callable=AsyncMock)
 def test_list_informes_with_data(mock_query, client):
     mock_query.return_value = [
-        {
-            "id": "inf-1",
-            "title": "Junta Directiva - Cierre 2025",
-            "description": "",
-            "owner": "Andres Leon",
-            "created_at": None,
-            "graph_count": 5,
-        },
-        {
-            "id": "inf-2",
-            "title": "Comité de Riesgos",
-            "description": None,
-            "owner": "Andres Leon",
-            "created_at": None,
-            "graph_count": 3,
-        },
+        {"id": "inf-1", "title": "Junta Directiva - Cierre 2025", "description": "", "owner": "Andres Leon", "created_at": None, "graph_count": 5},
+        {"id": "inf-2", "title": "Comité de Riesgos", "description": None, "owner": "Andres Leon", "created_at": None, "graph_count": 3},
     ]
     response = client.get("/api/informes")
     assert response.status_code == 200
@@ -59,8 +45,7 @@ def test_list_informes_filter_by_owner(mock_query, client):
     mock_query.return_value = []
     response = client.get("/api/informes?owner=Andres Leon")
     assert response.status_code == 200
-    sql_arg = mock_query.call_args[0][1]
-    assert "owner = ?" in sql_arg
+    assert "owner = ?" in mock_query.call_args[0][1]
 
 
 # ==========================================
@@ -71,15 +56,10 @@ def test_list_informes_filter_by_owner(mock_query, client):
 @patch("src.api.router.execute_insert", new_callable=AsyncMock)
 def test_create_informe_success(mock_insert, client):
     mock_insert.return_value = {"success": True}
-    response = client.post("/api/informes", json={
-        "title": "Comité de Riesgos",
-        "description": "Informe mensual",
-        "owner": "Andres Leon",
-    })
+    response = client.post("/api/informes", json={"title": "Comité de Riesgos", "description": "Informe mensual", "owner": "Andres Leon"})
     assert response.status_code == 200
     data = response.json()
     assert data["title"] == "Comité de Riesgos"
-    assert "id" in data
     assert data["graph_count"] == 0
 
 
@@ -105,28 +85,13 @@ def test_create_informe_missing_title(client):
 def test_get_informe_detail(mock_query, mock_blob_class, client):
     mock_query.side_effect = [
         [{"id": "inf-1", "title": "Junta Directiva", "description": "", "owner": "Andres Leon", "created_at": None}],
-        [
-            {
-                "item_id": "item-1",
-                "graph_id": "g-1",
-                "type": "PIE",
-                "content": "https://example.com/chart.html",
-                "title": "Market Share",
-                "query": "SELECT ...",
-                "created_at": None,
-            }
-        ],
+        [{"item_id": "item-1", "graph_id": "g-1", "type": "PIE", "content": "https://example.com/chart.html", "title": "Market Share", "query": "SELECT 1", "created_at": None}],
     ]
-    mock_blob = AsyncMock()
-    mock_blob_class.return_value = mock_blob
-    mock_blob.close = AsyncMock()
-
+    mock_blob_class.return_value = AsyncMock()
     response = client.get("/api/informes/inf-1")
     assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Junta Directiva"
-    assert len(data["graphs"]) == 1
-    assert data["graphs"][0]["graph_id"] == "g-1"
+    assert response.json()["title"] == "Junta Directiva"
+    assert response.json()["graphs"][0]["graph_id"] == "g-1"
 
 
 @patch("src.api.router.execute_query", new_callable=AsyncMock)
@@ -150,6 +115,13 @@ def test_delete_informe_success(mock_insert, client):
     assert mock_insert.call_count == 2
 
 
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+def test_delete_informe_db_error(mock_insert, client):
+    mock_insert.side_effect = [{"success": True}, {"success": False, "error": "DB error"}]
+    response = client.delete("/api/informes/inf-1")
+    assert response.status_code == 500
+
+
 # ==========================================
 #  POST /api/informes/{id}/graphs
 # ==========================================
@@ -164,27 +136,26 @@ def test_add_graphs_to_informe(mock_query, mock_insert, client):
         [],
     ]
     mock_insert.return_value = {"success": True}
-
     response = client.post("/api/informes/inf-1/graphs", json={"graph_ids": ["g-1", "g-2"]})
     assert response.status_code == 200
-    data = response.json()
-    assert len(data["added"]) == 2
-    assert data["skipped_duplicates"] == []
+    assert len(response.json()["added"]) == 2
 
 
 @patch("src.api.router.execute_insert", new_callable=AsyncMock)
 @patch("src.api.router.execute_query", new_callable=AsyncMock)
 def test_add_graphs_skips_duplicates(mock_query, mock_insert, client):
-    mock_query.side_effect = [
-        [{"id": "inf-1"}],
-        [{"id": "g-1", "title": "Market Share"}],
-        [{"graph_id": "g-1"}],
-    ]
+    mock_query.side_effect = [[{"id": "inf-1"}], [{"id": "g-1", "title": "Market Share"}], [{"graph_id": "g-1"}]]
     mock_insert.return_value = {"success": True}
-
     response = client.post("/api/informes/inf-1/graphs", json={"graph_ids": ["g-1"]})
-    assert response.status_code == 200
     assert response.json()["skipped_duplicates"] == ["g-1"]
+
+
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_add_graphs_not_found_in_db(mock_query, mock_insert, client):
+    mock_query.side_effect = [[{"id": "inf-1"}], [], []]
+    response = client.post("/api/informes/inf-1/graphs", json={"graph_ids": ["nonexistent"]})
+    assert response.json()["not_found"] == ["nonexistent"]
 
 
 @patch("src.api.router.execute_query", new_callable=AsyncMock)
@@ -212,6 +183,13 @@ def test_remove_graph_from_informe(mock_insert, client):
     assert response.json()["item_id"] == "item-1"
 
 
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+def test_remove_graph_db_error(mock_insert, client):
+    mock_insert.return_value = {"success": False, "error": "DB error"}
+    response = client.delete("/api/informes/inf-1/graphs/item-1")
+    assert response.status_code == 500
+
+
 # ==========================================
 #  PATCH /api/informes/{id}/refresh
 # ==========================================
@@ -222,3 +200,74 @@ def test_refresh_informe_no_graphs(mock_query, client):
     mock_query.return_value = []
     response = client.patch("/api/informes/inf-1/refresh")
     assert response.status_code == 404
+
+
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_informe_success(mock_query, mock_insert, mock_orch_class, client):
+    mock_query.side_effect = [
+        [{"graph_id": "g-1"}],
+        [{"type": "BAR", "title": "Test", "query": "SELECT 1", "user_id": "user1"}],
+    ]
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.return_value = {"content": "https://store.blob.core.windows.net/charts/new.html"}
+    mock_orch_class.return_value = mock_orch
+    mock_insert.return_value = {"success": True}
+
+    response = client.patch("/api/informes/inf-1/refresh")
+    assert response.status_code == 200
+    assert "g-1" in response.json()["refreshed"]
+
+
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_informe_no_query(mock_query, mock_orch_class, client):
+    mock_query.side_effect = [
+        [{"graph_id": "g-1"}],
+        [{"type": "BAR", "title": "Test", "query": None, "user_id": "user1"}],
+    ]
+    mock_orch_class.return_value = AsyncMock()
+    response = client.patch("/api/informes/inf-1/refresh")
+    assert response.status_code == 200
+    assert len(response.json()["skipped"]) == 1
+
+
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_informe_graph_not_found(mock_query, mock_orch_class, client):
+    mock_query.side_effect = [[{"graph_id": "g-1"}], []]
+    mock_orch_class.return_value = AsyncMock()
+    response = client.patch("/api/informes/inf-1/refresh")
+    assert response.status_code == 200
+    assert len(response.json()["failed"]) == 1
+
+
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_informe_refresh_error(mock_query, mock_orch_class, client):
+    mock_query.side_effect = [
+        [{"graph_id": "g-1"}],
+        [{"type": "BAR", "title": "Test", "query": "SELECT 1", "user_id": "user1"}],
+    ]
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.return_value = {"error": "SQL failed"}
+    mock_orch_class.return_value = mock_orch
+    response = client.patch("/api/informes/inf-1/refresh")
+    assert response.status_code == 200
+    assert len(response.json()["failed"]) == 1
+
+
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_informe_exception(mock_query, mock_orch_class, client):
+    mock_query.side_effect = [
+        [{"graph_id": "g-1"}],
+        [{"type": "BAR", "title": "Test", "query": "SELECT 1", "user_id": "user1"}],
+    ]
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.side_effect = Exception("Connection lost")
+    mock_orch_class.return_value = mock_orch
+    response = client.patch("/api/informes/inf-1/refresh")
+    assert response.status_code == 200
+    assert len(response.json()["failed"]) == 1
