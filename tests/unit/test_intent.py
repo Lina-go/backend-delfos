@@ -18,4 +18,4 @@ async def test_intent_classifier_requiere_viz(settings):
     """Test intent classifier with requiere_viz question."""
     classifier = IntentClassifier(settings)
     result = await classifier.classify("Cómo ha evolucionado el número de clientes?")
-    assert result["intent"] in ["nivel_puntual", "requiere_viz"]
+    assert result["intent"] in ['nivel_puntual', 'requiere_visualizacion']
