@@ -110,3 +110,50 @@ class DeleteGraphsRequest(BaseModel):
     """Request to delete multiple graphs."""
 
     graph_ids: list[str]
+
+class InformeSummary(BaseModel):
+    """Informe as shown in the list view."""
+
+    id: str
+    title: str
+    description: str | None = None
+    owner: str | None = None
+    created_at: datetime | None = None
+    graph_count: int = 0
+
+
+class InformeGraph(BaseModel):
+    """A graph inside an informe."""
+
+    item_id: str
+    graph_id: str
+    type: str
+    content: str
+    title: str
+    query: str | None = None
+    created_at: datetime | None = None
+
+
+class InformeDetail(BaseModel):
+    """Full informe with its graphs."""
+
+    id: str
+    title: str
+    description: str | None = None
+    owner: str | None = None
+    created_at: datetime | None = None
+    graphs: list[InformeGraph] = []
+
+
+class CreateInformeRequest(BaseModel):
+    """Request to create a new informe."""
+
+    title: str
+    description: str | None = ""
+    owner: str | None = None
+
+
+class AddGraphsToInformeRequest(BaseModel):
+    """Request to add one or more graphs to an informe."""
+
+    graph_ids: list[str]

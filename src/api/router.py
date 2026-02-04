@@ -21,6 +21,11 @@ from src.api.models import (
     HealthResponse,
     Project,
     SaveGraphRequest,
+    InformeSummary,
+    InformeGraph,
+    InformeDetail,
+    CreateInformeRequest,
+    AddGraphsToInformeRequest,
 )
 from src.config.settings import Settings
 from src.infrastructure.cache.semantic_cache import SemanticCache
@@ -441,3 +446,240 @@ async def refresh_graph(
         "content": signed_url,
         "row_count": result.get("row_count", 0),
     }
+
+# ==========================================
+#  INFORME ENDPOINTS
+# ==========================================
+
+
+@router.get("/informes", response_model=list[InformeSummary], tags=["informes"])
+async def list_informes(
+    owner: str | None = None,
+    settings: Settings = Depends(get_settings_dependency),
+) -> list[InformeSummary]:
+    """List all informes with graph count."""
+    sql = """
+    SELECT p.id, p.title, p.description, p.owner, p.createdAt AS created_at,
+           COUNT(pi.id) AS graph_count
+    FROM dbo.Projects p
+    LEFT JOIN dbo.ProjectItems pi ON pi.projectId = p.id AND pi.graph_id IS NOT NULL
+    {where}
+    GROUP BY p.id, p.title, p.description, p.owner, p.createdAt
+    ORDER BY p.createdAt DESC
+    """
+    if owner:
+        rows = await execute_query(settings, sql.format(where="WHERE p.owner = ?"), (owner,))
+    else:
+        rows = await execute_query(settings, sql.format(where=""))
+
+    return [
+        InformeSummary(
+            id=str(r["id"]),
+            title=str(r["title"]),
+            description=r.get("description"),
+            owner=r.get("owner"),
+            created_at=r.get("created_at"),
+            graph_count=r.get("graph_count", 0),
+        )
+        for r in rows
+    ]
+
+
+@router.post("/informes", response_model=InformeSummary, tags=["informes"])
+async def create_informe(
+    request: CreateInformeRequest,
+    settings: Settings = Depends(get_settings_dependency),
+) -> InformeSummary:
+    """Create a new informe."""
+    new_id = str(uuid.uuid4())
+    result = await execute_insert(
+        settings,
+        "INSERT INTO dbo.Projects (id, title, description, owner, createdAt) VALUES (?, ?, ?, ?, GETDATE())",
+        (new_id, request.title, request.description, request.owner),
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown')}")
+
+    return InformeSummary(id=new_id, title=request.title, description=request.description, owner=request.owner, graph_count=0)
+
+
+@router.get("/informes/{informe_id}", response_model=InformeDetail, tags=["informes"])
+async def get_informe(
+    informe_id: str,
+    settings: Settings = Depends(get_settings_dependency),
+) -> InformeDetail:
+    """Get informe detail with all its graphs (signed URLs)."""
+    header_rows = await execute_query(
+        settings,
+        "SELECT id, title, description, owner, createdAt AS created_at FROM dbo.Projects WHERE id = ?",
+        (informe_id,),
+    )
+    if not header_rows:
+        raise HTTPException(status_code=404, detail="Informe not found")
+    h = header_rows[0]
+
+    graphs_data = await execute_query(
+        settings,
+        """
+        SELECT pi.id AS item_id, g.id AS graph_id, g.type, g.content, g.title, g.query, g.createdAt AS created_at
+        FROM dbo.ProjectItems pi
+        INNER JOIN dbo.Graphs g ON pi.graph_id = g.id
+        WHERE pi.projectId = ?
+        ORDER BY pi.createdAt ASC
+        """,
+        (informe_id,),
+    )
+
+    storage_client = BlobStorageClient(settings)
+    container = settings.azure_storage_container_name or "charts"
+
+    graphs = [
+        InformeGraph(
+            item_id=str(row["item_id"]),
+            graph_id=str(row["graph_id"]),
+            type=str(row.get("type", "")),
+            content=await _sign_blob_url(row.get("content", ""), storage_client, container),
+            title=str(row.get("title", "")),
+            query=row.get("query"),
+            created_at=row.get("created_at"),
+        )
+        for row in graphs_data
+    ]
+    await storage_client.close()
+
+    return InformeDetail(
+        id=str(h["id"]), title=str(h["title"]), description=h.get("description"),
+        owner=h.get("owner"), created_at=h.get("created_at"), graphs=graphs,
+    )
+
+
+@router.delete("/informes/{informe_id}", tags=["informes"])
+async def delete_informe(
+    informe_id: str,
+    settings: Settings = Depends(get_settings_dependency),
+) -> dict[str, str]:
+    """Delete an informe and its graph associations (not the graphs themselves)."""
+    await execute_insert(settings, "DELETE FROM dbo.ProjectItems WHERE projectId = ?", (informe_id,))
+    result = await execute_insert(settings, "DELETE FROM dbo.Projects WHERE id = ?", (informe_id,))
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown')}")
+    return {"status": "success", "id": informe_id}
+
+
+@router.post("/informes/{informe_id}/graphs", tags=["informes"])
+async def add_graphs_to_informe(
+    informe_id: str,
+    request: AddGraphsToInformeRequest,
+    settings: Settings = Depends(get_settings_dependency),
+) -> dict[str, Any]:
+    """Add one or more graphs to an informe."""
+    if not request.graph_ids:
+        raise HTTPException(status_code=400, detail="No graph IDs provided")
+
+    # Verify informe exists
+    if not await execute_query(settings, "SELECT id FROM dbo.Projects WHERE id = ?", (informe_id,)):
+        raise HTTPException(status_code=404, detail="Informe not found")
+
+    # Find which graphs exist and which are already linked
+    ph = ", ".join(["?" for _ in request.graph_ids])
+    existing = await execute_query(settings, f"SELECT id, title FROM dbo.Graphs WHERE id IN ({ph})", tuple(request.graph_ids))
+    existing_map = {str(g["id"]): str(g["title"]) for g in existing}
+
+    already = await execute_query(
+        settings,
+        f"SELECT graph_id FROM dbo.ProjectItems WHERE projectId = ? AND graph_id IN ({ph})",
+        (informe_id, *request.graph_ids),
+    )
+    already_ids = {str(r["graph_id"]) for r in already}
+
+    added, skipped, not_found = [], [], []
+
+    for gid in request.graph_ids:
+        if gid not in existing_map:
+            not_found.append(gid)
+        elif gid in already_ids:
+            skipped.append(gid)
+        else:
+            result = await execute_insert(
+                settings,
+                "INSERT INTO dbo.ProjectItems (id, projectId, type, content, title, graph_id, createdAt) VALUES (?, ?, 'graph', '', ?, ?, GETDATE())",
+                (str(uuid.uuid4()), informe_id, existing_map[gid], gid),
+            )
+            if result.get("success"):
+                added.append(gid)
+
+    return {"status": "success", "added": added, "skipped_duplicates": skipped, "not_found": not_found}
+
+
+@router.delete("/informes/{informe_id}/graphs/{item_id}", tags=["informes"])
+async def remove_graph_from_informe(
+    informe_id: str,
+    item_id: str,
+    settings: Settings = Depends(get_settings_dependency),
+) -> dict[str, str]:
+    """Remove a graph from an informe (does NOT delete the graph itself)."""
+    result = await execute_insert(
+        settings, "DELETE FROM dbo.ProjectItems WHERE id = ? AND projectId = ?", (item_id, informe_id),
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown')}")
+    return {"status": "success", "item_id": item_id}
+
+
+@router.patch("/informes/{informe_id}/refresh", tags=["informes"])
+async def refresh_informe(
+    informe_id: str,
+    settings: Settings = Depends(get_settings_dependency),
+) -> dict[str, Any]:
+    """Refresh all graphs in an informe by re-executing their stored queries."""
+    items = await execute_query(
+        settings,
+        "SELECT graph_id FROM dbo.ProjectItems WHERE projectId = ? AND graph_id IS NOT NULL",
+        (informe_id,),
+    )
+    if not items:
+        raise HTTPException(status_code=404, detail="Informe has no graphs")
+
+    refreshed, failed, skipped = [], [], []
+    orchestrator = PipelineOrchestrator(settings)
+
+    try:
+        for item in items:
+            gid = str(item["graph_id"])
+            graph_rows = await execute_query(
+                settings, "SELECT type, title, query, user_id FROM dbo.Graphs WHERE id = ?", (gid,),
+            )
+            if not graph_rows:
+                failed.append({"id": gid, "error": "Graph not found"})
+                continue
+
+            g = graph_rows[0]
+            if not g.get("query"):
+                skipped.append({"id": gid, "reason": "No stored query"})
+                continue
+
+            try:
+                result = await orchestrator.refresh_graph(
+                    sql=g["query"], chart_type=g.get("type", "bar"),
+                    title=g.get("title", "Visualización"), user_id=g.get("user_id", "system"),
+                )
+                if result.get("error"):
+                    failed.append({"id": gid, "error": result["error"]})
+                    continue
+
+                await execute_insert(
+                    settings,
+                    "UPDATE dbo.Graphs SET content = ?, createdAt = GETDATE() WHERE id = ?",
+                    (_clean_blob_url(result.get("content", "")), gid),
+                )
+                refreshed.append(gid)
+            except Exception as e:
+                logger.error(f"Error refreshing graph {gid}: {e}")
+                failed.append({"id": gid, "error": str(e)})
+    finally:
+        try:
+            await orchestrator.close()
+        except Exception:
+            pass
+
+    return {"status": "success", "informe_id": informe_id, "refreshed": refreshed, "failed": failed, "skipped": skipped}
