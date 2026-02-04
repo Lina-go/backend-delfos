@@ -368,3 +368,76 @@ async def delete_graphs_bulk(
         raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown error')}")
 
     return {"status": "success", "deleted_count": len(request.graph_ids)}
+
+@router.patch("/graphs/{graph_id}/refresh", tags=["graphs"])
+async def refresh_graph(
+    graph_id: str,
+    settings: Settings = Depends(get_settings_dependency),
+) -> dict[str, Any]:
+    """Re-execute a graph's stored query and regenerate its visualization."""
+    # 1. Fetch graph from DB
+    graphs_data = await execute_query(
+        settings,
+        "SELECT type, content, title, query, user_id FROM dbo.Graphs WHERE id = ?",
+        (graph_id,),
+    )
+    if not graphs_data:
+        raise HTTPException(status_code=404, detail="Graph not found")
+
+    graph = graphs_data[0]
+    sql_query = graph.get("query")
+    if not sql_query:
+        raise HTTPException(status_code=400, detail="Graph has no stored query to refresh")
+
+    chart_type = graph.get("type", "bar")
+    title = graph.get("title", "Visualización")
+    user_id = graph.get("user_id", "system")
+
+    # 2. Re-execute query and regenerate viz
+    orchestrator = None
+    try:
+        orchestrator = PipelineOrchestrator(settings)
+        result = await orchestrator.refresh_graph(
+            sql=sql_query,
+            chart_type=chart_type,
+            title=title,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.error(f"Error refreshing graph {graph_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        if orchestrator:
+            try:
+                await orchestrator.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Error during cleanup: {cleanup_error}")
+
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    # 3. Update graph in DB with new content
+    new_content = _clean_blob_url(result.get("content", ""))
+    update_result = await execute_insert(
+        settings,
+        "UPDATE dbo.Graphs SET content = ?, createdAt = GETDATE() WHERE id = ?",
+        (new_content, graph_id),
+    )
+    if not update_result.get("success") or update_result.get("error"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update graph: {update_result.get('error', 'Unknown error')}",
+        )
+
+    # 4. Return signed URL
+    storage_client = BlobStorageClient(settings)
+    container_name = settings.azure_storage_container_name or "charts"
+    signed_url = await _sign_blob_url(new_content, storage_client, container_name)
+    await storage_client.close()
+
+    return {
+        "status": "success",
+        "id": graph_id,
+        "content": signed_url,
+        "row_count": result.get("row_count", 0),
+    }

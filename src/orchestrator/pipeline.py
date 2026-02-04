@@ -67,7 +67,6 @@ class PipelineOrchestrator:
         self.formatter = ResponseFormatter(settings)
         self.session_logger = SessionLogger()
 
-        # Initialize DelfosTools for direct DB access if enabled
         self.db_tools: DelfosTools | None = None
         if settings.use_direct_db:
             logger.info("Initializing DelfosTools for direct database access")
@@ -77,7 +76,6 @@ class PipelineOrchestrator:
                 report_id=settings.powerbi_report_id,
             )
 
-        # Initialize VisualizationService with db_tools
         self.viz = VisualizationService(settings, db_tools=self.db_tools)
 
     async def close(self) -> None:
@@ -91,6 +89,59 @@ class PipelineOrchestrator:
             logger.info("Pipeline resources closed")
         except Exception as e:
             logger.error(f"Error closing pipeline resources: {e}", exc_info=True)
+        
+    async def refresh_graph(
+        self,
+        sql: str,
+        chart_type: str,
+        title: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        """Re-execute a saved query and regenerate its visualization.
+
+        Reuses the same services as the main pipeline (steps 5, 7, 8)
+        without triage, intent, schema, or SQL generation.
+
+        Args:
+            sql: The stored SQL query to re-execute.
+            chart_type: Chart type (pie, bar, line, stackedbar).
+            title: Graph title.
+            user_id: User identifier.
+
+        Returns:
+            Dict with new content URL, row_count, and graph metadata.
+        """
+        # Step 5: Execute SQL
+        exec_result = await self.sql_exec.execute(sql, db_tools=self.db_tools)
+        if not exec_result.get("resultados"):
+            return {"error": f"Query returned no results: {exec_result.get('resumen', '')}"}
+
+        # Step 7: Visualization (format data points)
+        viz_result = await self.viz.generate(
+            sql_results=exec_result["resultados"],
+            user_id=user_id,
+            question=title,
+            sql_query=sql,
+            chart_type=chart_type,
+        )
+        if not viz_result.get("data_points") or not viz_result.get("run_id"):
+            return {"error": "Visualization formatting failed"}
+
+        # Step 8: Graph (generate image)
+        graph_result = await self.graph.generate(
+            run_id=str(viz_result["run_id"]),
+            chart_type=chart_type,
+            data_points=viz_result["data_points"],
+            title=title,
+        )
+
+        return {
+            "content": graph_result.image_url or graph_result.html_url,
+            "html_url": graph_result.html_url,
+            "png_url": graph_result.png_url,
+            "run_id": viz_result["run_id"],
+            "row_count": exec_result["total_filas"],
+        }
 
     async def _step_triage(
         self,

@@ -158,3 +158,120 @@ def test_delete_graphs_bulk_empty(client):
     """Return 400 when no IDs provided."""
     response = client.request("DELETE", "/api/graphs", json={"graph_ids": []})
     assert response.status_code == 400
+
+# ==========================================
+#  PATCH /api/graphs/{graph_id}/refresh
+# ==========================================
+
+
+@patch("src.api.router.BlobStorageClient")
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_graph_success(mock_query, mock_orch_cls, mock_insert, mock_blob_cls, client):
+    """Refresh a graph successfully."""
+    # DB returns graph with query
+    mock_query.return_value = [
+        {"type": "line", "content": "https://old.blob.core.windows.net/charts/old.html", "title": "Test", "query": "SELECT 1", "user_id": "user1"}
+    ]
+
+    # Orchestrator returns new content
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.return_value = {
+        "content": "https://mystorage.blob.core.windows.net/charts/new.html",
+        "row_count": 5,
+    }
+    mock_orch_cls.return_value = mock_orch
+
+    # DB update succeeds
+    mock_insert.return_value = {"success": True}
+
+    # Blob signing returns same URL (no real SAS in test)
+    mock_storage = AsyncMock()
+    mock_blob_cls.return_value = mock_storage
+
+    response = client.patch("/api/graphs/abc-123/refresh")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["id"] == "abc-123"
+    assert data["row_count"] == 5
+
+    # Verify orchestrator was called with correct params
+    mock_orch.refresh_graph.assert_called_once_with(
+        sql="SELECT 1", chart_type="line", title="Test", user_id="user1",
+    )
+    mock_orch.close.assert_called_once()
+
+
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_graph_not_found(mock_query, client):
+    """Return 404 when graph doesn't exist."""
+    mock_query.return_value = []
+    response = client.patch("/api/graphs/nonexistent/refresh")
+    assert response.status_code == 404
+
+
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_graph_no_query(mock_query, client):
+    """Return 400 when graph has no stored SQL query."""
+    mock_query.return_value = [
+        {"type": "bar", "content": "https://example.com/chart.html", "title": "Test", "query": None, "user_id": "user1"}
+    ]
+    response = client.patch("/api/graphs/abc-123/refresh")
+    assert response.status_code == 400
+    assert "no stored query" in response.json()["detail"]
+
+
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_graph_pipeline_error(mock_query, mock_orch_cls, mock_insert, client):
+    """Return 500 when pipeline returns error."""
+    mock_query.return_value = [
+        {"type": "bar", "content": "https://example.com/c.html", "title": "T", "query": "SELECT 1", "user_id": "u1"}
+    ]
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.return_value = {"error": "Query returned no results"}
+    mock_orch_cls.return_value = mock_orch
+
+    response = client.patch("/api/graphs/abc-123/refresh")
+    assert response.status_code == 500
+    assert "no results" in response.json()["detail"]
+    mock_orch.close.assert_called_once()
+
+
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_graph_orchestrator_exception(mock_query, mock_orch_cls, client):
+    """Return 500 and cleanup on orchestrator exception."""
+    mock_query.return_value = [
+        {"type": "bar", "content": "https://example.com/c.html", "title": "T", "query": "SELECT 1", "user_id": "u1"}
+    ]
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.side_effect = RuntimeError("Connection timeout")
+    mock_orch_cls.return_value = mock_orch
+
+    response = client.patch("/api/graphs/abc-123/refresh")
+    assert response.status_code == 500
+    mock_orch.close.assert_called_once()
+
+
+@patch("src.api.router.BlobStorageClient")
+@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.router.execute_query", new_callable=AsyncMock)
+def test_refresh_graph_db_update_fails(mock_query, mock_orch_cls, mock_insert, mock_blob_cls, client):
+    """Return 500 when DB update after refresh fails."""
+    mock_query.return_value = [
+        {"type": "bar", "content": "https://example.com/c.html", "title": "T", "query": "SELECT 1", "user_id": "u1"}
+    ]
+    mock_orch = AsyncMock()
+    mock_orch.refresh_graph.return_value = {"content": "https://mystorage.blob.core.windows.net/charts/new.html", "row_count": 3}
+    mock_orch_cls.return_value = mock_orch
+
+    mock_insert.return_value = {"success": False, "error": "Write conflict"}
+
+    response = client.patch("/api/graphs/abc-123/refresh")
+    assert response.status_code == 500
+    assert "Write conflict" in response.json()["detail"]
