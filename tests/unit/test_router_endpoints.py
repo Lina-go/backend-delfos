@@ -58,7 +58,7 @@ def test_parse_metadata_invalid_json():
 
 
 def test_health(client):
-    response = client.get("/health")
+    response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
 
@@ -66,13 +66,13 @@ def test_health(client):
 @patch("src.api.router.SemanticCache")
 def test_cache_stats(mock_cache, client):
     mock_cache.get_stats.return_value = {"hits": 0, "misses": 0}
-    response = client.get("/cache/stats")
+    response = client.get("/api/cache/stats")
     assert response.status_code == 200
 
 
 @patch("src.api.router.SemanticCache")
 def test_cache_clear(mock_cache, client):
-    response = client.delete("/cache")
+    response = client.delete("/api/cache")
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
@@ -85,9 +85,16 @@ def test_cache_clear(mock_cache, client):
 @patch("src.api.router.PipelineOrchestrator")
 def test_chat_success(mock_orch_class, client):
     mock_orch = AsyncMock()
-    mock_orch.process.return_value = {"response": "ok", "sql": "SELECT 1"}
+    mock_orch.process.return_value = {
+        "response": "ok",
+        "sql": "SELECT 1",
+        "patron": "COMPARACION",
+        "datos": [],
+        "arquetipo": "A",
+        "visualizacion": "bar",
+    }
     mock_orch_class.return_value = mock_orch
-    response = client.post("/chat", json={"message": "hola", "user_id": "u1"})
+    response = client.post("/api/chat", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 200
 
 
@@ -96,7 +103,7 @@ def test_chat_error(mock_orch_class, client):
     mock_orch = AsyncMock()
     mock_orch.process.side_effect = Exception("Pipeline failed")
     mock_orch_class.return_value = mock_orch
-    response = client.post("/chat", json={"message": "hola", "user_id": "u1"})
+    response = client.post("/api/chat", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 500
 
 
@@ -108,7 +115,7 @@ def test_chat_stream(mock_orch_class, client):
     mock_orch = AsyncMock()
     mock_orch.process_stream = fake_stream
     mock_orch_class.return_value = mock_orch
-    response = client.post("/chat/stream", json={"message": "hola", "user_id": "u1"})
+    response = client.post("/api/chat/stream", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 200
     assert "data:" in response.text
 
@@ -122,7 +129,7 @@ def test_chat_stream_error(mock_orch_class, client):
     mock_orch = AsyncMock()
     mock_orch.process_stream = fail_stream
     mock_orch_class.return_value = mock_orch
-    response = client.post("/chat/stream", json={"message": "hola", "user_id": "u1"})
+    response = client.post("/api/chat/stream", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 200
     assert "error" in response.text
 
@@ -137,7 +144,7 @@ def test_get_projects(mock_query, client):
     mock_query.return_value = [
         {"id": "p-1", "title": "Test", "description": None, "owner": "user", "created_at": None}
     ]
-    response = client.get("/projects")
+    response = client.get("/api/projects")
     assert response.status_code == 200
     assert len(response.json()) == 1
 
@@ -145,7 +152,7 @@ def test_get_projects(mock_query, client):
 @patch("src.api.router.execute_query", new_callable=AsyncMock)
 def test_get_projects_error(mock_query, client):
     mock_query.side_effect = Exception("DB error")
-    response = client.get("/projects")
+    response = client.get("/api/projects")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -153,7 +160,7 @@ def test_get_projects_error(mock_query, client):
 @patch("src.api.router.execute_insert", new_callable=AsyncMock)
 def test_create_project(mock_insert, client):
     mock_insert.return_value = {"success": True}
-    response = client.post("/projects", json={"title": "Test", "description": "d", "owner": "u"})
+    response = client.post("/api/projects", json={"title": "Test", "description": "d", "owner": "u"})
     assert response.status_code == 200
     assert response.json()["title"] == "Test"
 
@@ -161,14 +168,14 @@ def test_create_project(mock_insert, client):
 @patch("src.api.router.execute_insert", new_callable=AsyncMock)
 def test_create_project_error(mock_insert, client):
     mock_insert.return_value = {"success": False, "error": "DB error"}
-    response = client.post("/projects", json={"title": "Test"})
+    response = client.post("/api/projects", json={"title": "Test"})
     assert response.status_code == 500
 
 
 @patch("src.api.router.execute_insert", new_callable=AsyncMock)
 def test_add_project_item(mock_insert, client):
     mock_insert.return_value = {"success": True}
-    response = client.post("/projects/p-1/items", json={
+    response = client.post("/api/projects/p-1/items", json={
         "type": "chart",
         "content": "https://store.blob.core.windows.net/charts/file.html?sig=abc",
         "title": "Test",
@@ -185,7 +192,7 @@ def test_get_project_items(mock_query, mock_blob_class, client):
     ]
     mock_blob = AsyncMock()
     mock_blob_class.return_value = mock_blob
-    response = client.get("/projects/p-1/items")
+    response = client.get("/api/projects/p-1/items")
     assert response.status_code == 200
     assert len(response.json()) == 1
 
@@ -193,6 +200,6 @@ def test_get_project_items(mock_query, mock_blob_class, client):
 @patch("src.api.router.execute_query", new_callable=AsyncMock)
 def test_get_project_items_error(mock_query, client):
     mock_query.side_effect = Exception("DB error")
-    response = client.get("/projects/p-1/items")
+    response = client.get("/api/projects/p-1/items")
     assert response.status_code == 200
     assert response.json() == []
