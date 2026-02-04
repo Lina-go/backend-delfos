@@ -29,6 +29,9 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest --cov=src --cov-report=xml -q
 
+      - name: Fix coverage paths
+        run: sed -i 's|/home/runner/work/backend-delfos/backend-delfos/||g' coverage.xml
+
       - uses: SonarSource/sonarcloud-github-action@e44258b109568baa0df60ed515909fc6c72cba92
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
