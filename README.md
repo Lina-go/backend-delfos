@@ -33,6 +33,8 @@ uvicorn src.app:app --reload
 uv run python -m uvicorn src.app:app --reload
 uv run uvicorn src.app:app --reload
 ```
+4. Tests
+python tests/integration/test_sql_dates.py --url http://localhost:8000
 
 ## Docker
 
