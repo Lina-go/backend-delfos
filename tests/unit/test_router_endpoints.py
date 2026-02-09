@@ -2,11 +2,13 @@
 
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from src.app import app
-from src.api.router import _clean_blob_url, _parse_metadata
+from src.api.router import _clean_blob_url, _clean_graph_content, _sign_graph_content, _parse_metadata
 
 
 @pytest.fixture
@@ -33,6 +35,145 @@ def test_clean_blob_url_strips_sas():
     result = _clean_blob_url(url)
     assert "blob.core.windows.net" in result
     assert "sig=abc" not in result
+
+
+# ==========================================
+#  _clean_graph_content
+# ==========================================
+
+
+def test_clean_graph_content_empty():
+    assert _clean_graph_content("") == ""
+    assert _clean_graph_content(None) is None
+
+
+def test_clean_graph_content_plain_url():
+    url = "https://store.blob.core.windows.net/charts/file.html?sv=2023&sig=abc"
+    result = _clean_graph_content(url)
+    assert "sig=abc" not in result
+    assert result == "https://store.blob.core.windows.net/charts/file.html"
+
+
+def test_clean_graph_content_json_strips_sas():
+    content = json.dumps({
+        "html_url": "https://store.blob.core.windows.net/charts/file.html?sv=2023&sig=abc",
+        "image_url": "https://store.blob.core.windows.net/charts/file.png?sv=2023&sig=def",
+        "link_power_bi": None,
+    })
+    result = _clean_graph_content(content)
+    parsed = json.loads(result)
+    assert "sig=" not in parsed["html_url"]
+    assert "sig=" not in parsed["image_url"]
+    assert parsed["html_url"] == "https://store.blob.core.windows.net/charts/file.html"
+    assert parsed["image_url"] == "https://store.blob.core.windows.net/charts/file.png"
+    assert parsed["link_power_bi"] is None
+
+
+def test_clean_graph_content_json_preserves_non_blob_urls():
+    content = json.dumps({
+        "html_url": None,
+        "image_url": None,
+        "link_power_bi": "https://app.powerbi.com/view?r=abc123",
+    })
+    result = _clean_graph_content(content)
+    parsed = json.loads(result)
+    assert parsed["link_power_bi"] == "https://app.powerbi.com/view?r=abc123"
+
+
+def test_clean_graph_content_json_output_is_valid_json():
+    """Regression: _clean_blob_url on JSON would truncate at the first '?'."""
+    content = json.dumps({
+        "html_url": "https://store.blob.core.windows.net/charts/uuid.html?sv=2023&sig=abc",
+        "image_url": None,
+        "link_power_bi": None,
+    })
+    result = _clean_graph_content(content)
+    # Must be valid JSON — the old bug truncated here
+    parsed = json.loads(result)
+    assert isinstance(parsed, dict)
+    assert "html_url" in parsed
+    assert "image_url" in parsed
+    assert "link_power_bi" in parsed
+
+
+# ==========================================
+#  _sign_graph_content
+# ==========================================
+
+
+@pytest.mark.asyncio
+async def test_sign_graph_content_empty():
+    mock_client = AsyncMock()
+    assert await _sign_graph_content("", mock_client, "charts") == ""
+
+
+@pytest.mark.asyncio
+async def test_sign_graph_content_plain_url():
+    mock_client = AsyncMock()
+    mock_client.get_blob_sas_url.return_value = "https://store.blob.core.windows.net/charts/file.html?sv=NEW&sig=NEW"
+    url = "https://store.blob.core.windows.net/charts/file.html"
+    result = await _sign_graph_content(url, mock_client, "charts")
+    assert "sig=NEW" in result
+    mock_client.get_blob_sas_url.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sign_graph_content_json_signs_each_url():
+    mock_client = AsyncMock()
+    mock_client.get_blob_sas_url.side_effect = lambda container_name, blob_name: (
+        f"https://store.blob.core.windows.net/{container_name}/{blob_name}?sig=SIGNED"
+    )
+    content = json.dumps({
+        "html_url": "https://store.blob.core.windows.net/charts/file.html",
+        "image_url": "https://store.blob.core.windows.net/charts/file.png",
+        "link_power_bi": None,
+    })
+    result = await _sign_graph_content(content, mock_client, "charts")
+    parsed = json.loads(result)
+    assert "sig=SIGNED" in parsed["html_url"]
+    assert "sig=SIGNED" in parsed["image_url"]
+    assert parsed["link_power_bi"] is None
+    assert mock_client.get_blob_sas_url.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sign_graph_content_json_skips_null_urls():
+    mock_client = AsyncMock()
+    mock_client.get_blob_sas_url.return_value = "https://store.blob.core.windows.net/charts/file.html?sig=SIGNED"
+    content = json.dumps({
+        "html_url": "https://store.blob.core.windows.net/charts/file.html",
+        "image_url": None,
+        "link_power_bi": None,
+    })
+    result = await _sign_graph_content(content, mock_client, "charts")
+    parsed = json.loads(result)
+    assert "sig=SIGNED" in parsed["html_url"]
+    assert parsed["image_url"] is None
+    # Solo debe firmar 1 URL (html_url), no las null
+    mock_client.get_blob_sas_url.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sign_graph_content_json_output_is_valid_json():
+    """Regression: _sign_blob_url on JSON would produce a garbage blob name."""
+    mock_client = AsyncMock()
+    mock_client.get_blob_sas_url.return_value = "https://store.blob.core.windows.net/charts/file.html?sig=FRESH"
+    content = json.dumps({
+        "html_url": "https://store.blob.core.windows.net/charts/file.html",
+        "image_url": None,
+        "link_power_bi": None,
+    })
+    result = await _sign_graph_content(content, mock_client, "charts")
+    parsed = json.loads(result)
+    assert isinstance(parsed, dict)
+    assert "html_url" in parsed
+    assert "image_url" in parsed
+    assert "link_power_bi" in parsed
+
+
+# ==========================================
+#  _parse_metadata
+# ==========================================
 
 
 def test_parse_metadata_none():

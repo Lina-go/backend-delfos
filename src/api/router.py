@@ -73,6 +73,40 @@ async def _sign_blob_url(url: str, storage_client: BlobStorageClient, container_
     return url
 
 
+def _clean_graph_content(content: str) -> str:
+    """Clean blob URLs inside a graph content field (JSON or plain URL)."""
+    if not content:
+        return content
+    try:
+        obj = json.loads(content)
+        if isinstance(obj, dict):
+            for key in ("html_url", "image_url", "imagen", "link_power_bi"):
+                if key in obj and isinstance(obj[key], str):
+                    obj[key] = _clean_blob_url(obj[key])
+            return json.dumps(obj)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return _clean_blob_url(content)
+
+
+async def _sign_graph_content(
+    content: str, storage_client: BlobStorageClient, container_name: str
+) -> str:
+    """Sign blob URLs inside a graph content field (JSON or plain URL)."""
+    if not content:
+        return content
+    try:
+        obj = json.loads(content)
+        if isinstance(obj, dict):
+            for key in ("html_url", "image_url", "imagen", "link_power_bi"):
+                if key in obj and isinstance(obj[key], str) and obj[key]:
+                    obj[key] = await _sign_blob_url(obj[key], storage_client, container_name)
+            return json.dumps(obj)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return await _sign_blob_url(content, storage_client, container_name)
+
+
 def _parse_metadata(raw: Any) -> dict:
     """Parse a JSON string into a dict, returning empty dict on failure."""
     if not raw:
@@ -238,7 +272,7 @@ async def add_project_item(
     VALUES (?, ?, ?, ?, ?, GETDATE())
     """
     result = await execute_insert(
-        settings, sql, (item_id, project_id, request.type, _clean_blob_url(request.content), title)
+        settings, sql, (item_id, project_id, request.type, _clean_graph_content(request.content), title)
     )
     if not result.get("success") or result.get("error"):
         raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown error')}")
@@ -267,7 +301,7 @@ async def get_project_items(
                 "id": str(item.get("id")),
                 "project_id": str(item.get("projectId")),
                 "type": item.get("type"),
-                "content": await _sign_blob_url(item.get("content", ""), storage_client, container_name),
+                "content": await _sign_graph_content(item.get("content", ""), storage_client, container_name),
                 "title": item.get("title"),
                 "created_at": item.get("created_at"),
             }
@@ -308,7 +342,7 @@ async def get_graphs(
         Graph(
             id=str(g.get("id", "")),
             type=str(g.get("type", "")),
-            content=await _sign_blob_url(g.get("content", ""), storage_client, container_name),
+            content=await _sign_graph_content(g.get("content", ""), storage_client, container_name),
             title=str(g.get("title", "")),
             query=g.get("query"),
             created_at=g.get("created_at"),
@@ -337,7 +371,7 @@ async def save_graph(
     """
     result = await execute_insert(
         settings, sql,
-        (graph_id, request.type, _clean_blob_url(request.content), request.title, request.query, metadata_str, request.user_id),
+        (graph_id, request.type, _clean_graph_content(request.content), request.title, request.query, metadata_str, request.user_id),
     )
     if not result.get("success") or result.get("error"):
         raise HTTPException(status_code=500, detail=f"Database error: {result.get('error', 'Unknown error')}")
@@ -423,7 +457,7 @@ async def refresh_graph(
         raise HTTPException(status_code=500, detail=result["error"])
 
     # 3. Update graph in DB with new content
-    new_content = _clean_blob_url(result.get("content", ""))
+    new_content = _clean_graph_content(result.get("content", ""))
     update_result = await execute_insert(
         settings,
         "UPDATE dbo.Graphs SET content = ?, createdAt = GETDATE() WHERE id = ?",
@@ -438,7 +472,7 @@ async def refresh_graph(
     # 4. Return signed URL
     storage_client = BlobStorageClient(settings)
     container_name = settings.azure_storage_container_name or "charts"
-    signed_url = await _sign_blob_url(new_content, storage_client, container_name)
+    signed_url = await _sign_graph_content(new_content, storage_client, container_name)
     await storage_client.close()
 
     return {
@@ -539,7 +573,7 @@ async def get_informe(
             item_id=str(row["item_id"]),
             graph_id=str(row["graph_id"]),
             type=str(row.get("type", "")),
-            content=await _sign_blob_url(row.get("content", ""), storage_client, container),
+            content=await _sign_graph_content(row.get("content", ""), storage_client, container),
             title=str(row.get("title", "")),
             query=row.get("query"),
             created_at=row.get("created_at"),
@@ -671,7 +705,7 @@ async def refresh_informe(
                 await execute_insert(
                     settings,
                     "UPDATE dbo.Graphs SET content = ?, createdAt = GETDATE() WHERE id = ?",
-                    (_clean_blob_url(result.get("content", "")), gid),
+                    (_clean_graph_content(result.get("content", "")), gid),
                 )
                 refreshed.append(gid)
             except Exception as e:
