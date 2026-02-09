@@ -19,6 +19,7 @@ class PipelineState:
     intent: str | None = None  # nivel_puntual | requiere_viz
     pattern_type: str | None = None  # comparacion | relacion | proyeccion | simulacion
     arquetipo: str | None = None
+    titulo_grafica: str | None = None
 
     # Step 3: Schema
     selected_tables: list[str] = field(default_factory=list)

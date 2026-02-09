@@ -219,6 +219,7 @@ class PipelineOrchestrator:
         archetype_letter = str(intent_result.get("arquetipo", "N"))
         state.arquetipo = get_archetype_name(archetype_letter)
         state.viz_required = state.intent == "requiere_visualizacion"
+        state.titulo_grafica = intent_result.get("titulo_grafica")
         self.session_logger.log_agent_response(
             agent_name="IntentClassifier",
             raw_response=json.dumps(intent_result, indent=2, ensure_ascii=False),
@@ -324,6 +325,7 @@ class PipelineOrchestrator:
                     "arquetipo": state.arquetipo,
                     "visualizacion": "NO",
                     "tipo_grafica": None,
+                    "titulo_grafica": state.titulo_grafica,
                     "imagen": None,
                     "link_power_bi": None,
                     "insight": "",
@@ -341,6 +343,7 @@ class PipelineOrchestrator:
                     "arquetipo": state.arquetipo,
                     "visualizacion": "NO",
                     "tipo_grafica": None,
+                    "titulo_grafica": state.titulo_grafica,
                     "imagen": None,
                     "link_power_bi": None,
                     "insight": "",
@@ -379,6 +382,7 @@ class PipelineOrchestrator:
                         "arquetipo": state.arquetipo,
                         "visualizacion": "NO",
                         "tipo_grafica": None,
+                        "titulo_grafica": state.titulo_grafica,
                         "imagen": None,
                         "link_power_bi": None,
                         "insight": "",
@@ -869,6 +873,7 @@ class PipelineOrchestrator:
                 data_points=viz_result.get("data_points") if viz_result else None,
                 tables=state.schema_context.get("tables", []) if state.schema_context else [],
                 schema_context=state.schema_context,
+                title=state.titulo_grafica,
             )
 
             self.session_logger.end_session(
@@ -1082,6 +1087,7 @@ class PipelineOrchestrator:
                 data_points=viz_result.get("data_points") if viz_result else None,
                 tables=state.schema_context.get("tables", []) if state.schema_context else [],
                 schema_context=state.schema_context,
+                title=state.titulo_grafica,
             )
 
             self.session_logger.end_session(
@@ -1124,6 +1130,7 @@ class PipelineOrchestrator:
             "arquetipo": None,
             "visualizacion": "NO",
             "tipo_grafica": None,
+            "titulo_grafica": None,
             "imagen": None,
             "link_power_bi": None,
             "insight": reasoning,
@@ -1145,6 +1152,7 @@ class PipelineOrchestrator:
             "arquetipo": state.arquetipo,
             "visualizacion": "NA",
             "tipo_grafica": "NA",
+            "titulo_grafica": state.titulo_grafica,
             "imagen": "NA",
             "link_power_bi": "NA",
             "insight": "NA",

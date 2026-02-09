@@ -233,13 +233,15 @@ def build_intent_system_prompt() -> str:
         '  "intent": "[nivel_puntual or requiere_visualizacion]", '
         '  "tipo_patron": "[Comparación, Relación, Proyección, or Simulación]", '
         '  "arquetipo": "[single uppercase letter: A-N]", '
-        '  "razon": "[brief explanation in Spanish]" '
+        '  "razon": "[brief explanation in Spanish]", '
+        '  "titulo_grafica": "[short descriptive chart title in Spanish, max 10 words]" '
         "} "
         "``` "
         ""
         "**Critical field mapping**: "
         "- **tipo_patron**: Must be the Pattern (one of: Comparación, Relación, Proyección, or Simulación) that your identified archetype belongs to "
         "- **arquetipo**: Must be the individual archetype letter (a single uppercase letter from A to N) that best matches the question "
+        "- **titulo_grafica**: Create a concise, descriptive title for the chart that would best visualize the answer to this question. This should be in Spanish and no more than 10 words. It should capture the key insight or comparison that the chart would show. For example, if the question is 'How has the average loan amount evolved over the last 12 months?' a good title might be 'Evolución del monto promedio de préstamos'. If the question is 'Which bank has the highest total portfolio?' a good title might be 'Banco con mayor cartera total'. The title should be specific to the question and reflect the main point of the visualization. "
         ""
         "Begin your classification now. "
     )

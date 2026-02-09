@@ -43,6 +43,7 @@ class FollowUpHandler:
             "arquetipo": "NA",
             "visualizacion": "NO",
             "tipo_grafica": context.last_chart_type,
+            "titulo_grafica": context.last_title,
             "imagen": context.last_response.get("imagen") if context.last_response else None,
             "link_power_bi": None,
             "insight": response_text,
@@ -133,6 +134,7 @@ El usuario hizo una consulta y ahora tiene una pregunta de seguimiento.
             "arquetipo": "NA",
             "visualizacion": "NO",
             "tipo_grafica": None,
+            "titulo_grafica": None,
             "imagen": None,
             "link_power_bi": None,
             "insight": (

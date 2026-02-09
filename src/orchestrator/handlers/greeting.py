@@ -35,6 +35,7 @@ class GreetingHandler:
             "arquetipo": "NA",
             "visualizacion": "NO",
             "tipo_grafica": None,
+            "titulo_grafica": None,
             "imagen": None,
             "link_power_bi": None,
             "insight": self.RESPONSES[response_key],

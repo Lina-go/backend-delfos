@@ -21,6 +21,7 @@ class ChatResponse(BaseModel):
     arquetipo: str = Field(..., description="Pattern type (A-N)")
     visualizacion: str = Field(..., description="YES or NO")
     tipo_grafica: str | None = Field(None, description="Chart type")
+    titulo_grafica: str | None = Field(None, description="Chart title")
     imagen: str | None = Field(None, description="Chart image URL")
     html_url: str | None = Field(None, description="Chart HTML URL")
     link_power_bi: str | None = Field(None, description="Power BI URL")
