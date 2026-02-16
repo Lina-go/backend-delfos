@@ -5,11 +5,7 @@ from typing import Any
 
 from src.config.prompts import build_format_prompt
 from src.config.settings import Settings
-from src.infrastructure.llm.executor import run_single_agent
-from src.infrastructure.llm.factory import (
-    azure_agent_client,
-    get_shared_credential,
-)
+from src.orchestrator.handlers._llm_helper import run_handler_agent
 from src.orchestrator.state import PipelineState
 from src.services.formatting.code_formatter import CodeFormatter
 from src.utils.json_parser import JSONParser
@@ -66,33 +62,26 @@ class ResponseFormatter:
                 format_input["viz_data"] = {
                     "tipo_grafico": state.tipo_grafico,
                     "powerbi_url": state.powerbi_url,
-                    "image_url": state.image_url,
-                    "html_url": state.html_url,
                     "run_id": state.run_id,
                 }
 
             # Use LLM to format response
             system_prompt = build_format_prompt()
-            model = self.settings.format_agent_model
 
-            # Create agent without tools
-            credential = get_shared_credential()
-            # ResponseFormatter doesn't use tools, only needs 1-2 iterations
-            async with azure_agent_client(
-                self.settings, model, credential, max_iterations=2
-            ) as client:
-                agent = client.create_agent(
-                    name="ResponseFormatter",
-                    instructions=system_prompt,
-                    max_tokens=self.settings.format_max_tokens,
-                    temperature=self.settings.format_temperature,
-                )
-                response = await run_single_agent(agent, str(format_input))
+            response = await run_handler_agent(
+                self.settings,
+                name="ResponseFormatter",
+                instructions=system_prompt,
+                message=str(format_input),
+                model=self.settings.format_agent_model,
+                max_tokens=self.settings.format_max_tokens,
+                temperature=self.settings.format_temperature,
+            )
 
             result = JSONParser.extract_json(response)
             return result
 
         except Exception as e:
-            logger.error(f"LLM formatting error: {e}", exc_info=True)
+            logger.error("LLM formatting error: %s", e, exc_info=True)
             # Fallback to code-based formatting on error
             return self.code_formatter.format(state)

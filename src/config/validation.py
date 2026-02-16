@@ -118,6 +118,16 @@ def is_sql_safe(sql: str) -> tuple[bool, str | None]:
     if not any(sql_upper.startswith(prefix) for prefix in ALLOWED_STATEMENT_PREFIXES):
         return False, f"Query must start with one of: {ALLOWED_STATEMENT_NAMES}"
 
+    # 5. Check common SQL Server syntax errors
+    invalid_syntax_patterns = [
+        (r"\bSELECT\s+TOP\s+\d+\s+DISTINCT\b", "Invalid SQL Server syntax: use 'SELECT DISTINCT TOP N' or 'SELECT TOP N ... GROUP BY' instead of 'SELECT TOP N DISTINCT'"),
+        (r"\bLIMIT\s+\d+", "Invalid syntax: LIMIT is not supported in T-SQL (SQL Server). Use 'SELECT TOP N' instead."),
+        (r"\bOFFSET\s+\d+\s+ROWS?\b", "Invalid syntax: OFFSET is not supported in this context. Use 'SELECT TOP N' instead."),
+    ]
+    for pattern, msg in invalid_syntax_patterns:
+        if re.search(pattern, sql_upper):
+            return False, msg
+
     return True, None
 
 
@@ -135,7 +145,7 @@ def validate_table_references(sql: str, valid_tables: set[str]) -> list[str]:
 
     Args:
         sql: SQL query string
-        valid_tables: Set of valid table names (e.g., {"dbo.Tasas_Captacion", "dbo.Distribucion_Cartera"})
+        valid_tables: Set of valid table names (e.g., {"gold.tasas_interes_captacion", "gold.distribucion_cartera"})
 
     Returns:
         List of error messages (empty if valid)

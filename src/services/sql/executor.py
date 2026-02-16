@@ -1,5 +1,6 @@
 """SQL executor service."""
 
+import ast
 import datetime
 import logging
 import re
@@ -8,8 +9,6 @@ from typing import Any
 
 from src.config.settings import Settings
 from src.infrastructure.database import DelfosTools
-from src.infrastructure.mcp.client import MCPClient
-from src.utils.retry import run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +26,7 @@ _SAFE_EVAL_CONTEXT: dict[str, Any] = {
 # Pattern to validate input contains only expected characters
 # Allows: tuples, strings, numbers, Decimal(), datetime.X(), None, True, False
 # Also allows comparison operators < > = that may appear in string data
-_SAFE_INPUT_PATTERN = re.compile(
-    r"^[\(\),\s\w\.'\":\-\+<>=]+$"
-)
+_SAFE_INPUT_PATTERN = re.compile(r"^[\(\),\s\w\.'\":\-\+<>=]+$")
 
 
 class SQLExecutionResult:
@@ -112,14 +109,22 @@ class RowParser:
         """
         # Validate input contains only expected characters
         if not _SAFE_INPUT_PATTERN.match(line):
-            logger.warning(f"Row contains unexpected characters, skipping eval: '{line[:100]}...'")
+            logger.warning("Row contains unexpected characters, skipping eval: '%s...'", line[:100])
             return line
 
+        # Prefer ast.literal_eval for basic Python literals (safe, no code execution)
         try:
-            value = eval(line, _SAFE_EVAL_CONTEXT)  # noqa: S307
+            return RowParser._normalize(ast.literal_eval(line))
+        except (ValueError, SyntaxError):
+            pass
+
+        # Fallback for Decimal/datetime types that ast.literal_eval cannot handle.
+        # Input is already validated by _SAFE_INPUT_PATTERN regex above.
+        try:
+            value = eval(line, _SAFE_EVAL_CONTEXT)  # noqa: S307 - restricted context, validated input
             return RowParser._normalize(value)
         except Exception as e:
-            logger.warning(f"Failed to parse row '{line[:100]}...': {e}")
+            logger.warning("Failed to parse row '%s...': %s", line[:100], e)
             return line
 
     @staticmethod
@@ -256,9 +261,8 @@ class ColumnExtractor:
     def _strip_wrappers(value: str) -> str:
         """Remove SQL identifier wrappers like [], '', ""."""
         value = value.strip()
-        if len(value) >= 2:
-            if (value[0], value[-1]) in [("[", "]"), ('"', '"'), ("'", "'")]:
-                return value[1:-1]
+        if len(value) >= 2 and (value[0], value[-1]) in [("[", "]"), ('"', '"'), ("'", "'")]:
+            return value[1:-1]
         return value
 
 
@@ -284,44 +288,36 @@ class ResultFormatter:
 
 
 class SQLExecutor:
-    """Executes SQL queries via MCP and formats results deterministically."""
+    """Executes SQL queries and formats results deterministically."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def close(self) -> None:
-        """Close resources (no-op, connections managed via context manager)."""
-        pass
-
     async def execute(
         self,
         sql: str,
-        mcp: Any | None = None,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
         """Execute SQL query and return formatted results.
 
         Args:
             sql: SQL query to execute
-            mcp: Optional MCP connection
-            db_tools: Optional DelfosTools instance for direct DB access
+            db_tools: DelfosTools instance for direct DB access
         """
         try:
-            if db_tools is not None:
-                # Use direct database access
-                execution_result = db_tools.execute_sql(sql)
-            else:
-                # Use MCP
-                execution_result = await self._execute_with_retry(sql, mcp)
+            if db_tools is None:
+                return SQLExecutionResult.error("No database tools available").to_dict()
+
+            execution_result = db_tools.execute_sql(sql)
 
             if error := execution_result.get("error"):
-                logger.error(f"SQL execution error: {error}")
+                logger.error("SQL execution error: %s", error)
                 return SQLExecutionResult.error(f"Error executing SQL: {error}").to_dict()
 
             raw_results = execution_result.get("raw", "")
             row_count = execution_result.get("row_count", 0)
 
-            logger.info(f"SQL executed successfully: {row_count} rows returned")
+            logger.info("SQL executed successfully: %s rows returned", row_count)
             logger.debug("SQL raw results (first 2000 chars): %s", raw_results[:2000])
 
             # Parse and format results
@@ -332,30 +328,5 @@ class SQLExecutor:
             return SQLExecutionResult.success(resultados, row_count).to_dict()
 
         except Exception as e:
-            logger.error(f"SQL execution error: {e}", exc_info=True)
+            logger.error("SQL execution error: %s", e, exc_info=True)
             return SQLExecutionResult.error(f"Error executing SQL: {e}").to_dict()
-
-    async def _execute_with_retry(self, sql: str, mcp: Any | None) -> dict[str, Any]:
-        """Execute SQL with retry logic for transient failures."""
-
-        async def _execute_once() -> dict[str, Any]:
-            if mcp is None:
-                async with MCPClient(self.settings) as mcp_client:
-                    result = await mcp_client.execute_sql(sql)
-            else:
-                mcp_client = MCPClient.from_connection(mcp)
-                result = await mcp_client.execute_sql(sql)
-
-            error_msg = str(result.get("error") or "").lower()
-            if "login timeout" in error_msg or "timeout expired" in error_msg:
-                raise TimeoutError(f"SQL Connection Timeout: {result['error']}")
-
-            return result
-
-        logger.info("Executing SQL query via MCP")
-        return await run_with_retry(
-            _execute_once,
-            max_retries=3,
-            initial_delay=2.0,
-            backoff_factor=2.0,
-        )

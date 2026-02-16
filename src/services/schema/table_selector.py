@@ -35,14 +35,14 @@ class TableSelector:
 
             if tables:
                 table_list = list(tables)
-                logger.debug(f"Selected {len(table_list)} tables for message: {table_list}")
+                logger.debug("Selected %s tables for message: %s", len(table_list), table_list)
                 return table_list
 
             # Fallback: if no tables found, return empty list
             # The SQL agent can still use MCP tools to discover tables
-            logger.warning(f"No tables found for message: {message[:50]}...")
+            logger.warning("No tables found for message: %s...", message[:50])
             return []
 
         except Exception as e:
-            logger.error(f"Error selecting tables: {e}", exc_info=True)
+            logger.error("Error selecting tables: %s", e, exc_info=True)
             return []

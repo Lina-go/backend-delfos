@@ -1,14 +1,12 @@
-"""Tests for existing router endpoints (health, cache, chat, projects, helpers)."""
+"""Tests for router endpoints (health, cache, chat, projects, helpers)."""
 
-from unittest.mock import AsyncMock, patch, MagicMock
-
-import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.models import Graph
 from src.app import app
-from src.api.router import _clean_blob_url, _clean_graph_content, _sign_graph_content, _parse_metadata
 
 
 @pytest.fixture
@@ -17,180 +15,38 @@ def client():
 
 
 # ==========================================
-#  HELPER FUNCTIONS
-# ==========================================
-
-
-def test_clean_blob_url_empty():
-    assert _clean_blob_url("") == ""
-    assert _clean_blob_url(None) == None
-
-
-def test_clean_blob_url_non_blob():
-    assert _clean_blob_url("https://example.com/file.html") == "https://example.com/file.html"
-
-
-def test_clean_blob_url_strips_sas():
-    url = "https://store.blob.core.windows.net/charts/file.html?sv=2023&sig=abc"
-    result = _clean_blob_url(url)
-    assert "blob.core.windows.net" in result
-    assert "sig=abc" not in result
-
-
-# ==========================================
-#  _clean_graph_content
-# ==========================================
-
-
-def test_clean_graph_content_empty():
-    assert _clean_graph_content("") == ""
-    assert _clean_graph_content(None) is None
-
-
-def test_clean_graph_content_plain_url():
-    url = "https://store.blob.core.windows.net/charts/file.html?sv=2023&sig=abc"
-    result = _clean_graph_content(url)
-    assert "sig=abc" not in result
-    assert result == "https://store.blob.core.windows.net/charts/file.html"
-
-
-def test_clean_graph_content_json_strips_sas():
-    content = json.dumps({
-        "html_url": "https://store.blob.core.windows.net/charts/file.html?sv=2023&sig=abc",
-        "image_url": "https://store.blob.core.windows.net/charts/file.png?sv=2023&sig=def",
-        "link_power_bi": None,
-    })
-    result = _clean_graph_content(content)
-    parsed = json.loads(result)
-    assert "sig=" not in parsed["html_url"]
-    assert "sig=" not in parsed["image_url"]
-    assert parsed["html_url"] == "https://store.blob.core.windows.net/charts/file.html"
-    assert parsed["image_url"] == "https://store.blob.core.windows.net/charts/file.png"
-    assert parsed["link_power_bi"] is None
-
-
-def test_clean_graph_content_json_preserves_non_blob_urls():
-    content = json.dumps({
-        "html_url": None,
-        "image_url": None,
-        "link_power_bi": "https://app.powerbi.com/view?r=abc123",
-    })
-    result = _clean_graph_content(content)
-    parsed = json.loads(result)
-    assert parsed["link_power_bi"] == "https://app.powerbi.com/view?r=abc123"
-
-
-def test_clean_graph_content_json_output_is_valid_json():
-    """Regression: _clean_blob_url on JSON would truncate at the first '?'."""
-    content = json.dumps({
-        "html_url": "https://store.blob.core.windows.net/charts/uuid.html?sv=2023&sig=abc",
-        "image_url": None,
-        "link_power_bi": None,
-    })
-    result = _clean_graph_content(content)
-    # Must be valid JSON — the old bug truncated here
-    parsed = json.loads(result)
-    assert isinstance(parsed, dict)
-    assert "html_url" in parsed
-    assert "image_url" in parsed
-    assert "link_power_bi" in parsed
-
-
-# ==========================================
-#  _sign_graph_content
-# ==========================================
-
-
-@pytest.mark.asyncio
-async def test_sign_graph_content_empty():
-    mock_client = AsyncMock()
-    assert await _sign_graph_content("", mock_client, "charts") == ""
-
-
-@pytest.mark.asyncio
-async def test_sign_graph_content_plain_url():
-    mock_client = AsyncMock()
-    mock_client.get_blob_sas_url.return_value = "https://store.blob.core.windows.net/charts/file.html?sv=NEW&sig=NEW"
-    url = "https://store.blob.core.windows.net/charts/file.html"
-    result = await _sign_graph_content(url, mock_client, "charts")
-    assert "sig=NEW" in result
-    mock_client.get_blob_sas_url.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_sign_graph_content_json_signs_each_url():
-    mock_client = AsyncMock()
-    mock_client.get_blob_sas_url.side_effect = lambda container_name, blob_name: (
-        f"https://store.blob.core.windows.net/{container_name}/{blob_name}?sig=SIGNED"
-    )
-    content = json.dumps({
-        "html_url": "https://store.blob.core.windows.net/charts/file.html",
-        "image_url": "https://store.blob.core.windows.net/charts/file.png",
-        "link_power_bi": None,
-    })
-    result = await _sign_graph_content(content, mock_client, "charts")
-    parsed = json.loads(result)
-    assert "sig=SIGNED" in parsed["html_url"]
-    assert "sig=SIGNED" in parsed["image_url"]
-    assert parsed["link_power_bi"] is None
-    assert mock_client.get_blob_sas_url.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_sign_graph_content_json_skips_null_urls():
-    mock_client = AsyncMock()
-    mock_client.get_blob_sas_url.return_value = "https://store.blob.core.windows.net/charts/file.html?sig=SIGNED"
-    content = json.dumps({
-        "html_url": "https://store.blob.core.windows.net/charts/file.html",
-        "image_url": None,
-        "link_power_bi": None,
-    })
-    result = await _sign_graph_content(content, mock_client, "charts")
-    parsed = json.loads(result)
-    assert "sig=SIGNED" in parsed["html_url"]
-    assert parsed["image_url"] is None
-    # Solo debe firmar 1 URL (html_url), no las null
-    mock_client.get_blob_sas_url.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_sign_graph_content_json_output_is_valid_json():
-    """Regression: _sign_blob_url on JSON would produce a garbage blob name."""
-    mock_client = AsyncMock()
-    mock_client.get_blob_sas_url.return_value = "https://store.blob.core.windows.net/charts/file.html?sig=FRESH"
-    content = json.dumps({
-        "html_url": "https://store.blob.core.windows.net/charts/file.html",
-        "image_url": None,
-        "link_power_bi": None,
-    })
-    result = await _sign_graph_content(content, mock_client, "charts")
-    parsed = json.loads(result)
-    assert isinstance(parsed, dict)
-    assert "html_url" in parsed
-    assert "image_url" in parsed
-    assert "link_power_bi" in parsed
-
-
-# ==========================================
-#  _parse_metadata
+#  Graph.from_db_row metadata parsing
 # ==========================================
 
 
 def test_parse_metadata_none():
-    assert _parse_metadata(None) == {}
-    assert _parse_metadata("") == {}
+    row = {"id": "1", "type": "bar", "content": "", "title": "T", "metadata": None}
+    graph = Graph.from_db_row(row)
+    assert graph.metadata == {}
+
+
+def test_parse_metadata_empty_string():
+    row = {"id": "1", "type": "bar", "content": "", "title": "T", "metadata": ""}
+    graph = Graph.from_db_row(row)
+    assert graph.metadata == {}
 
 
 def test_parse_metadata_valid_json():
-    assert _parse_metadata('{"key": "value"}') == {"key": "value"}
+    row = {"id": "1", "type": "bar", "content": "", "title": "T", "metadata": '{"key": "value"}'}
+    graph = Graph.from_db_row(row)
+    assert graph.metadata == {"key": "value"}
 
 
 def test_parse_metadata_dict():
-    assert _parse_metadata({"key": "value"}) == {"key": "value"}
+    row = {"id": "1", "type": "bar", "content": "", "title": "T", "metadata": {"key": "value"}}
+    graph = Graph.from_db_row(row)
+    assert graph.metadata == {"key": "value"}
 
 
 def test_parse_metadata_invalid_json():
-    assert _parse_metadata("{invalid}") == {}
+    row = {"id": "1", "type": "bar", "content": "", "title": "T", "metadata": "{invalid}"}
+    graph = Graph.from_db_row(row)
+    assert graph.metadata == {}
 
 
 # ==========================================
@@ -204,14 +60,14 @@ def test_health(client):
     assert response.json()["status"] == "healthy"
 
 
-@patch("src.api.router.SemanticCache")
+@patch("src.api.routers.cache.SemanticCache")
 def test_cache_stats(mock_cache, client):
     mock_cache.get_stats.return_value = {"hits": 0, "misses": 0}
     response = client.get("/api/cache/stats")
     assert response.status_code == 200
 
 
-@patch("src.api.router.SemanticCache")
+@patch("src.api.routers.cache.SemanticCache")
 def test_cache_clear(mock_cache, client):
     response = client.delete("/api/cache")
     assert response.status_code == 200
@@ -223,7 +79,7 @@ def test_cache_clear(mock_cache, client):
 # ==========================================
 
 
-@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.routers.chat.PipelineOrchestrator")
 def test_chat_success(mock_orch_class, client):
     mock_orch = AsyncMock()
     mock_orch.process.return_value = {
@@ -234,34 +90,40 @@ def test_chat_success(mock_orch_class, client):
         "arquetipo": "A",
         "visualizacion": "bar",
     }
+    mock_orch.__aenter__ = AsyncMock(return_value=mock_orch)
+    mock_orch.__aexit__ = AsyncMock(return_value=False)
     mock_orch_class.return_value = mock_orch
     response = client.post("/api/chat", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 200
 
 
-@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.routers.chat.PipelineOrchestrator")
 def test_chat_error(mock_orch_class, client):
     mock_orch = AsyncMock()
     mock_orch.process.side_effect = Exception("Pipeline failed")
+    mock_orch.__aenter__ = AsyncMock(return_value=mock_orch)
+    mock_orch.__aexit__ = AsyncMock(return_value=False)
     mock_orch_class.return_value = mock_orch
     response = client.post("/api/chat", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 500
 
 
-@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.routers.chat.PipelineOrchestrator")
 def test_chat_stream(mock_orch_class, client):
     async def fake_stream(*args):
         yield {"step": "done", "data": "ok"}
 
     mock_orch = AsyncMock()
     mock_orch.process_stream = fake_stream
+    mock_orch.__aenter__ = AsyncMock(return_value=mock_orch)
+    mock_orch.__aexit__ = AsyncMock(return_value=False)
     mock_orch_class.return_value = mock_orch
     response = client.post("/api/chat/stream", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 200
     assert "data:" in response.text
 
 
-@patch("src.api.router.PipelineOrchestrator")
+@patch("src.api.routers.chat.PipelineOrchestrator")
 def test_chat_stream_error(mock_orch_class, client):
     async def fail_stream(*args):
         raise Exception("Stream failed")
@@ -269,6 +131,8 @@ def test_chat_stream_error(mock_orch_class, client):
 
     mock_orch = AsyncMock()
     mock_orch.process_stream = fail_stream
+    mock_orch.__aenter__ = AsyncMock(return_value=mock_orch)
+    mock_orch.__aexit__ = AsyncMock(return_value=False)
     mock_orch_class.return_value = mock_orch
     response = client.post("/api/chat/stream", json={"message": "hola", "user_id": "u1"})
     assert response.status_code == 200
@@ -280,7 +144,7 @@ def test_chat_stream_error(mock_orch_class, client):
 # ==========================================
 
 
-@patch("src.api.router.execute_query", new_callable=AsyncMock)
+@patch("src.services.projects.service.execute_query", new_callable=AsyncMock)
 def test_get_projects(mock_query, client):
     mock_query.return_value = [
         {"id": "p-1", "title": "Test", "description": None, "owner": "user", "created_at": None}
@@ -290,7 +154,7 @@ def test_get_projects(mock_query, client):
     assert len(response.json()) == 1
 
 
-@patch("src.api.router.execute_query", new_callable=AsyncMock)
+@patch("src.services.projects.service.execute_query", new_callable=AsyncMock)
 def test_get_projects_error(mock_query, client):
     mock_query.side_effect = Exception("DB error")
     response = client.get("/api/projects")
@@ -298,22 +162,22 @@ def test_get_projects_error(mock_query, client):
     assert response.json() == []
 
 
-@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.services.projects.service.execute_insert", new_callable=AsyncMock)
 def test_create_project(mock_insert, client):
     mock_insert.return_value = {"success": True}
     response = client.post("/api/projects", json={"title": "Test", "description": "d", "owner": "u"})
-    assert response.status_code == 200
+    assert response.status_code == 201
     assert response.json()["title"] == "Test"
 
 
-@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.services.projects.service.execute_insert", new_callable=AsyncMock)
 def test_create_project_error(mock_insert, client):
     mock_insert.return_value = {"success": False, "error": "DB error"}
     response = client.post("/api/projects", json={"title": "Test"})
     assert response.status_code == 500
 
 
-@patch("src.api.router.execute_insert", new_callable=AsyncMock)
+@patch("src.services.projects.service.execute_insert", new_callable=AsyncMock)
 def test_add_project_item(mock_insert, client):
     mock_insert.return_value = {"success": True}
     response = client.post("/api/projects/p-1/items", json={
@@ -321,24 +185,20 @@ def test_add_project_item(mock_insert, client):
         "content": "https://store.blob.core.windows.net/charts/file.html?sig=abc",
         "title": "Test",
     })
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
+    assert response.status_code == 201
 
 
-@patch("src.api.router.BlobStorageClient")
-@patch("src.api.router.execute_query", new_callable=AsyncMock)
-def test_get_project_items(mock_query, mock_blob_class, client):
+@patch("src.services.projects.service.execute_query", new_callable=AsyncMock)
+def test_get_project_items(mock_query, client):
     mock_query.return_value = [
-        {"id": "i-1", "projectId": "p-1", "type": "chart", "content": "https://example.com/f.html", "title": "T", "created_at": None}
+        {"id": "i-1", "projectId": "p-1", "type": "chart", "content": '{"data_points": []}', "title": "T", "created_at": None}
     ]
-    mock_blob = AsyncMock()
-    mock_blob_class.return_value = mock_blob
     response = client.get("/api/projects/p-1/items")
     assert response.status_code == 200
     assert len(response.json()) == 1
 
 
-@patch("src.api.router.execute_query", new_callable=AsyncMock)
+@patch("src.services.projects.service.execute_query", new_callable=AsyncMock)
 def test_get_project_items_error(mock_query, client):
     mock_query.side_effect = Exception("DB error")
     response = client.get("/api/projects/p-1/items")

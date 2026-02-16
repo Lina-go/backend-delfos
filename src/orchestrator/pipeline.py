@@ -2,34 +2,41 @@
 
 import json
 import logging
-import time
 import unicodedata
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from src.api.response import build_response
 from src.config.archetypes import (
+    Temporality,
+    get_archetype_letter_by_name,
     get_archetype_name,
     get_chart_type_for_archetype,
-    get_archetype_letter_by_name,
 )
-from src.config.constants import PipelineStep, PipelineStepDescription, QueryType
+from src.config.constants import ChartType, PatternType, PipelineStep, QueryType
+from src.config.message import get_rejection_message
 from src.config.prompts import (
     build_format_prompt,
     build_intent_system_prompt,
-    build_sql_execution_system_prompt,
-    build_sql_generation_system_prompt,
-    build_sql_retry_user_input,
     build_triage_system_prompt,
-    build_verification_system_prompt,
-    build_viz_prompt,
+    build_viz_mapping_prompt,
 )
 from src.config.settings import Settings
 from src.infrastructure.database import DelfosTools
 from src.infrastructure.logging.session_logger import SessionLogger
-from src.infrastructure.mcp.client import mcp_connection
+from src.orchestrator.context import ConversationContext, ConversationStore
+from src.orchestrator.handler_router import HandlerRouter
+from src.orchestrator.handlers import (
+    ClarificationHandler,
+    FollowUpHandler,
+    GeneralHandler,
+    GreetingHandler,
+    VizRequestHandler,
+)
+from src.orchestrator.sql_flow import SQLFlowOrchestrator
 from src.orchestrator.state import PipelineState
+from src.orchestrator.step_timer import timed_step
 from src.services.formatting.formatter import ResponseFormatter
-from src.services.graph.service import GraphService
 from src.services.intent.classifier import IntentClassifier
 from src.services.schema.service import SchemaService
 from src.services.sql.executor import SQLExecutor
@@ -38,10 +45,6 @@ from src.services.sql.validation import SQLValidationService
 from src.services.triage.classifier import TriageClassifier
 from src.services.verification.verifier import ResultVerifier
 from src.services.viz.service import VisualizationService
-from src.config.message import get_rejection_message
-from src.orchestrator.context import ConversationStore
-from src.orchestrator.handlers import GreetingHandler, FollowUpHandler, VizRequestHandler, GeneralHandler
-from src.services.verification.verification_result import VerificationResult
 
 logger = logging.getLogger(__name__)
 
@@ -57,21 +60,64 @@ class PipelineOrchestrator:
         self.follow_up_handler = FollowUpHandler(settings)
         self.viz_request_handler = VizRequestHandler(settings)
         self.general_handler = GeneralHandler(settings)
+        self.clarification_handler = ClarificationHandler(settings)
         self.intent = IntentClassifier(settings)
         self.schema = SchemaService(settings)
         self.sql_gen = SQLGenerator(settings)
         self.sql_validation = SQLValidationService()
         self.sql_exec = SQLExecutor(settings)
         self.verifier = ResultVerifier(settings)
-        self.graph = GraphService(settings)
         self.formatter = ResponseFormatter(settings)
         self.session_logger = SessionLogger()
+        self.handler_router = HandlerRouter(
+            greeting=self.greeting_handler,
+            follow_up=self.follow_up_handler,
+            viz_request=self.viz_request_handler,
+            general=self.general_handler,
+            clarification=self.clarification_handler,
+        )
+        self.sql_flow = SQLFlowOrchestrator(
+            settings=settings,
+            sql_gen=self.sql_gen,
+            sql_validation=self.sql_validation,
+            sql_exec=self.sql_exec,
+            verifier=self.verifier,
+            session_logger=self.session_logger,
+        )
 
         self.db_tools: DelfosTools | None = None
         if settings.use_direct_db:
-            logger.info("Initializing DelfosTools for direct database access")
+            from src.infrastructure.database.connection import FabricConnectionFactory
+
+            logger.info("Initializing DelfosTools with dual Fabric connections (WH + DB)")
+
+            if settings.use_service_principal:
+                from azure.identity import ClientSecretCredential
+
+                logger.info("Using Service Principal authentication")
+                shared_credential = ClientSecretCredential(
+                    tenant_id=settings.azure_tenant_id,
+                    client_id=settings.azure_client_id,
+                    client_secret=settings.azure_client_secret,
+                )
+            else:
+                from azure.identity import DefaultAzureCredential
+
+                logger.info("Using Managed Identity authentication")
+                shared_credential = DefaultAzureCredential()
+
+            wh_factory = FabricConnectionFactory(
+                settings.wh_server, settings.wh_database, credential=shared_credential
+            )
+            db_factory = FabricConnectionFactory(
+                settings.db_server, settings.db_database, credential=shared_credential
+            )
+
             self.db_tools = DelfosTools(
-                connection_string=settings.database_connection_string,
+                wh_factory=wh_factory,
+                db_factory=db_factory,
+                wh_schema=settings.wh_schema,
+                db_schema=settings.db_schema,
                 workspace_id=settings.powerbi_workspace_id,
                 report_id=settings.powerbi_report_id,
             )
@@ -81,15 +127,23 @@ class PipelineOrchestrator:
     async def close(self) -> None:
         """Close all service connections and cleanup resources."""
         try:
-            # Close MCP clients
-            if hasattr(self.schema, "close"):
-                await self.schema.close()
-            if hasattr(self.sql_exec, "close"):
-                await self.sql_exec.close()
+            if self.db_tools is not None:
+                self.db_tools.close()
             logger.info("Pipeline resources closed")
         except Exception as e:
-            logger.error(f"Error closing pipeline resources: {e}", exc_info=True)
-        
+            logger.error("Error closing pipeline resources: %s", e, exc_info=True)
+
+    async def __aenter__(self) -> "PipelineOrchestrator":
+        """Enter the async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Exit the async context manager, ensuring resources are cleaned up."""
+        try:
+            await self.close()
+        except Exception as cleanup_error:
+            logger.warning("Error during cleanup: %s", cleanup_error)
+
     async def refresh_graph(
         self,
         sql: str,
@@ -111,12 +165,10 @@ class PipelineOrchestrator:
         Returns:
             Dict with new content URL, row_count, and graph metadata.
         """
-        # Step 5: Execute SQL
         exec_result = await self.sql_exec.execute(sql, db_tools=self.db_tools)
         if not exec_result.get("resultados"):
             return {"error": f"Query returned no results: {exec_result.get('resumen', '')}"}
 
-        # Step 7: Visualization (format data points)
         viz_result = await self.viz.generate(
             sql_results=exec_result["resultados"],
             user_id=user_id,
@@ -124,22 +176,13 @@ class PipelineOrchestrator:
             sql_query=sql,
             chart_type=chart_type,
         )
-        if not viz_result.get("data_points") or not viz_result.get("run_id"):
+        if not viz_result.get("data_points"):
             return {"error": "Visualization formatting failed"}
 
-        # Step 8: Graph (generate image)
-        graph_result = await self.graph.generate(
-            run_id=str(viz_result["run_id"]),
-            chart_type=chart_type,
-            data_points=viz_result["data_points"],
-            title=title,
-        )
-
         return {
-            "content": graph_result.image_url or graph_result.html_url,
-            "html_url": graph_result.html_url,
-            "png_url": graph_result.png_url,
-            "run_id": viz_result["run_id"],
+            "data_points": viz_result["data_points"],
+            "metric_name": viz_result.get("metric_name"),
+            "run_id": viz_result.get("run_id"),
             "row_count": exec_result["total_filas"],
         }
 
@@ -149,87 +192,132 @@ class PipelineOrchestrator:
         message: str,
         has_context: bool = False,
         context_summary: str | None = None,
-        mcp: Any | None = None,
+        conversation_history: str | None = None,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
-        """Execute triage step with context awareness.
-
-        Args:
-            state: Current pipeline state
-            message: User's natural language question
-            has_context: Whether the user has previous conversation data
-            context_summary: Summary of available data in context
-            mcp: Optional MCP connection
-            db_tools: Optional DelfosTools instance for direct DB access
-
-        Returns:
-            Triage classification result
-        """
-        logger.info(f"{PipelineStep.TRIAGE.value}: {PipelineStepDescription.TRIAGE.value}")
+        """Execute triage step with context awareness."""
         triage_prompt = build_triage_system_prompt(
             has_context=has_context,
             context_summary=context_summary,
+            conversation_history=conversation_history,
         )
-        start_time = time.time()
-        triage_result = await self.triage.classify(
-            message,
-            has_context=has_context,
-            context_summary=context_summary,
-            mcp=mcp,
-            db_tools=db_tools,
-        )
-        execution_time = (time.time() - start_time) * 1000
-
-        if not triage_result or "query_type" not in triage_result:
-            logger.error(
-                f"TriageClassifier returned invalid result: {triage_result}. "
-                "Defaulting to data_question."
+        async with timed_step(
+            PipelineStep.TRIAGE, self.session_logger, "TriageClassifier",
+            input_text=message, system_prompt=triage_prompt,
+        ) as ctx:
+            triage_result = await self.triage.classify(
+                message,
+                has_context=has_context,
+                context_summary=context_summary,
+                conversation_history=conversation_history,
+                db_tools=db_tools,
             )
-            state.query_type = "data_question"
-            return {
-                "query_type": "data_question",
-                "reasoning": "Error parsing triage result, defaulting to data_question",
-            }
 
-        state.query_type = triage_result["query_type"]
-        self.session_logger.log_agent_response(
-            agent_name="TriageClassifier",
-            raw_response=json.dumps(triage_result, indent=2, ensure_ascii=False),
-            parsed_response=triage_result,
-            input_text=message,
-            system_prompt=triage_prompt,
-            execution_time_ms=execution_time,
-        )
+            if not triage_result or "query_type" not in triage_result:
+                logger.error(
+                    "TriageClassifier returned invalid result: %s. Defaulting to data_question.",
+                    triage_result,
+                )
+                state.query_type = QueryType.DATA_QUESTION
+                return {
+                    "query_type": QueryType.DATA_QUESTION,
+                    "reasoning": "Error parsing triage result, defaulting to data_question",
+                }
+
+            state.query_type = triage_result["query_type"]
+            ctx.set_result(triage_result)
 
         return triage_result
 
-    async def _step_intent(self, state: PipelineState, message: str) -> dict[str, Any]:
+    # Keywords that justify a "temporal" classification on their own merit.
+    # Used by _guard_temporality to prevent incorrect temporal inheritance.
+    _TEMPORAL_KEYWORDS = frozenset({
+        "evolucion", "evolución", "evolucionado",
+        "tendencia", "histórico", "historico",
+        "últimos meses", "ultimos meses",
+        "mes a mes",
+        "durante los últimos", "durante los ultimos",
+        "últimos años", "ultimos años",
+        "los últimos", "los ultimos",
+        "trimestres", "semestres",
+    })
+
+    @staticmethod
+    def _guard_temporality(intent_result: dict, original_message: str) -> None:
+        """Override temporal→estatico if no temporal keywords in the original message.
+
+        Prevents incorrect temporal inheritance from conversation context.
+        Only allows temporal when:
+        - The message has explicit temporal keywords, OR
+        - The message is a short fragment (likely a genuine follow-up reference)
+        """
+        if intent_result.get("temporality") != "temporal":
+            return
+
+        msg_lower = original_message.lower()
+        has_temporal_keyword = any(
+            kw in msg_lower for kw in PipelineOrchestrator._TEMPORAL_KEYWORDS
+        )
+
+        if has_temporal_keyword:
+            return  # Temporal is justified by the message itself
+
+        # Check if it's a short fragment (potential genuine follow-up)
+        stripped = original_message.strip()
+        is_full_question = stripped.startswith("¿") or len(stripped.split()) > 12
+
+        if not is_full_question:
+            return  # Short fragment — allow temporal inheritance
+
+        # Full question with no temporal keywords — override to estático
+        logger.info(
+            "Guard: overriding temporal→estatico (no temporal keywords in: '%s')",
+            original_message[:80],
+        )
+        intent_result["temporality"] = "estatico"
+
+    async def _step_intent(
+        self,
+        state: PipelineState,
+        message: str,
+        context: ConversationContext | None = None,
+    ) -> dict[str, Any]:
         """Execute intent classification step."""
-        logger.info(f"{PipelineStep.INTENT.value}: {PipelineStepDescription.INTENT.value}")
+        intent_message = message
+        if context and context.last_query and context.last_temporality:
+            intent_message = (
+                f"## Contexto de conversación\n"
+                f'Pregunta anterior: "{context.last_query}"\n'
+                f"Clasificación temporal anterior: {context.last_temporality}\n\n"
+                f"## Pregunta actual\n{message}"
+            )
+
         intent_prompt = build_intent_system_prompt()
-        start_time = time.time()
-        intent_result = await self.intent.classify(message)
-        execution_time = (time.time() - start_time) * 1000
+        async with timed_step(
+            PipelineStep.INTENT, self.session_logger, "IntentClassifier",
+            input_text=intent_message, system_prompt=intent_prompt,
+        ) as ctx:
+            intent_result = await self.intent.classify(intent_message)
 
-        state.intent = intent_result["intent"]
-        raw_pattern = intent_result.get("tipo_patron", "")
-        state.pattern_type = (
-            unicodedata.normalize("NFKD", raw_pattern).encode("ascii", "ignore").decode().lower()
-        )
-        archetype_letter = str(intent_result.get("arquetipo", "N"))
-        state.arquetipo = get_archetype_name(archetype_letter)
-        state.viz_required = state.intent == "requiere_visualizacion"
-        state.titulo_grafica = intent_result.get("titulo_grafica")
-        self.session_logger.log_agent_response(
-            agent_name="IntentClassifier",
-            raw_response=json.dumps(intent_result, indent=2, ensure_ascii=False),
-            parsed_response=intent_result,
-            input_text=message,
-            system_prompt=intent_prompt,
-            execution_time_ms=execution_time,
-        )
+            state.intent = intent_result["intent"]
+            raw_pattern = intent_result.get("tipo_patron", "")
+            state.pattern_type = (
+                unicodedata.normalize("NFKD", raw_pattern).encode("ascii", "ignore").decode().lower()
+            )
+            archetype_letter = str(intent_result.get("arquetipo", "K"))
+            state.arquetipo = get_archetype_name(archetype_letter)
+            state.viz_required = state.intent == "requiere_visualizacion"
+            state.titulo_grafica = intent_result.get("titulo_grafica")
+            state.is_tasa = intent_result.get("is_tasa", False)
 
-        if state.pattern_type != "comparacion":
+            # Guard: prevent incorrect temporal inheritance from conversation context
+            self._guard_temporality(intent_result, message)
+            state.temporality = intent_result.get("temporality", "estatico")
+
+            state.subject_cardinality = intent_result.get("subject_cardinality", 1)
+            ctx.set_result(intent_result)
+
+        if state.pattern_type != PatternType.COMPARACION:
             response = self._format_non_comparacion_response(state, intent_result)
             self.session_logger.end_session(
                 success=True,
@@ -244,454 +332,134 @@ class PipelineOrchestrator:
         self,
         state: PipelineState,
         message: str,
-        mcp: Any | None = None,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
         """Execute schema selection step."""
-        logger.info(f"{PipelineStep.SCHEMA.value}: {PipelineStepDescription.SCHEMA.value}")
-        start_time = time.time()
-        schema_result = await self.schema.get_schema_context(message, mcp=mcp, db_tools=db_tools)
-        execution_time = (time.time() - start_time) * 1000
-        state.selected_tables = schema_result.get("tables", [])
-        state.schema_context = schema_result
-        self.session_logger.log_agent_response(
-            agent_name="SchemaService",
-            raw_response=json.dumps(schema_result, indent=2, ensure_ascii=False),
-            parsed_response=schema_result,
+        async with timed_step(
+            PipelineStep.SCHEMA, self.session_logger, "SchemaService",
             input_text=message,
-            execution_time_ms=execution_time,
-        )
+        ) as ctx:
+            schema_result = await self.schema.get_schema_context(message, db_tools=db_tools)
+            state.selected_tables = schema_result.get("tables", [])
+            state.schema_context = schema_result
+            ctx.set_result(schema_result)
         return schema_result
-
-    async def _step_sql_generation(
-        self,
-        state: PipelineState,
-        message: str,
-        max_retries: int = 2,
-        mcp: Any | None = None,
-        db_tools: DelfosTools | None = None,
-    ) -> dict[str, Any]:
-        """Execute SQL generation step with validation and retries."""
-        logger.info(
-            f"{PipelineStep.SQL_GENERATION.value}: {PipelineStepDescription.SQL_GENERATION.value}"
-        )
-        sql_result: dict[str, Any] = {}
-        validation_errors: list[str] | None = None
-        previous_sql: str | None = None
-
-        for attempt in range(max_retries):
-            prioritized_tables = (
-                state.schema_context.get("tables", []) if state.schema_context else None
-            )
-            sql_prompt = build_sql_generation_system_prompt(prioritized_tables=prioritized_tables)
-            start_time = time.time()
-            sql_result = await self.sql_gen.generate(
-                message=message,
-                schema_context=state.schema_context,
-                intent=state.intent,
-                pattern_type=state.pattern_type,
-                arquetipo=state.arquetipo,
-                previous_errors=validation_errors,
-                previous_sql=previous_sql,
-                mcp=mcp,
-                db_tools=db_tools,
-            )
-            execution_time = (time.time() - start_time) * 1000
-            state.sql_query = sql_result.get("sql")
-
-            sql_input = {
-                "message": message,
-                "schema_context": state.schema_context,
-                "intent": state.intent,
-                "pattern_type": state.pattern_type,
-                "arquetipo": state.arquetipo,
-                "previous_errors": validation_errors,
-            }
-            self.session_logger.log_agent_response(
-                agent_name=f"SQLGenerator_attempt_{attempt + 1}",
-                raw_response=json.dumps(sql_result, indent=2, ensure_ascii=False),
-                parsed_response=sql_result,
-                input_text=json.dumps(sql_input, indent=2, ensure_ascii=False),
-                system_prompt=sql_prompt,
-                execution_time_ms=execution_time,
-            )
-
-            sql_error = sql_result.get("error")
-            if sql_error and not state.sql_query:
-                logger.warning(f"SQLGenerator could not generate query: {sql_error}")
-                return {
-                    "patron": state.pattern_type,
-                    "datos": [],
-                    "arquetipo": state.arquetipo,
-                    "visualizacion": "NO",
-                    "tipo_grafica": None,
-                    "titulo_grafica": state.titulo_grafica,
-                    "imagen": None,
-                    "link_power_bi": None,
-                    "insight": "",
-                    "error": sql_error,
-                }
-
-            # SQL Validation
-            logger.info(
-                f"{PipelineStep.SQL_VALIDATION.value}: {PipelineStepDescription.SQL_VALIDATION.value}"
-            )
-            if state.sql_query is None:
-                return {
-                    "patron": "error",
-                    "datos": [],
-                    "arquetipo": state.arquetipo,
-                    "visualizacion": "NO",
-                    "tipo_grafica": None,
-                    "titulo_grafica": state.titulo_grafica,
-                    "imagen": None,
-                    "link_power_bi": None,
-                    "insight": "",
-                    "error": "SQL validation failed: empty SQL query",
-                }
-            start_time = time.time()
-            validation_result = self.sql_validation.validate(state.sql_query)
-            execution_time = (time.time() - start_time) * 1000
-
-            self.session_logger.log_agent_response(
-                agent_name="SQLValidation",
-                raw_response=json.dumps(validation_result, indent=2, ensure_ascii=False),
-                parsed_response=validation_result,
-                input_text=state.sql_query,
-                execution_time_ms=execution_time,
-            )
-
-            if validation_result["is_valid"]:
-                break
-            else:
-                validation_errors = validation_result["errors"]
-                previous_sql = state.sql_query
-                logger.warning(
-                    f"SQL validation failed (attempt {attempt + 1}/{max_retries}): {validation_errors}"
-                )
-
-                if attempt < max_retries - 1:
-                    logger.info("Retrying SQL generation with validation error feedback...")
-                else:
-                    logger.error(
-                        f"SQL validation failed after {max_retries} attempts: {validation_errors}"
-                    )
-                    return {
-                        "patron": "error",
-                        "datos": [],
-                        "arquetipo": state.arquetipo,
-                        "visualizacion": "NO",
-                        "tipo_grafica": None,
-                        "titulo_grafica": state.titulo_grafica,
-                        "imagen": None,
-                        "link_power_bi": None,
-                        "insight": "",
-                        "error": f"SQL validation failed after {max_retries} attempts: {', '.join(validation_errors)}",
-                    }
-
-        return sql_result
-
-    async def _step_sql_execution(
-        self,
-        state: PipelineState,
-        mcp: Any | None = None,
-        db_tools: DelfosTools | None = None,
-    ) -> dict[str, Any]:
-        """Execute SQL query step."""
-        logger.info(
-            f"{PipelineStep.SQL_EXECUTION.value}: {PipelineStepDescription.SQL_EXECUTION.value}"
-        )
-        sql_exec_prompt = build_sql_execution_system_prompt()
-        if state.sql_query is None:
-            raise ValueError("SQL query is not set for execution")
-        start_time = time.time()
-        exec_result = await self.sql_exec.execute(state.sql_query, mcp=mcp, db_tools=db_tools)
-        execution_time = (time.time() - start_time) * 1000
-        state.sql_results = exec_result.get("resultados", [])
-        state.total_filas = exec_result.get("total_filas", 0)
-        state.sql_resumen = exec_result.get("resumen")
-        state.sql_insights = exec_result.get("insights")
-        self.session_logger.log_agent_response(
-            agent_name="SQLExecutor",
-            raw_response=json.dumps(exec_result, indent=2, ensure_ascii=False),
-            parsed_response=exec_result,
-            input_text=state.sql_query,
-            system_prompt=sql_exec_prompt,
-            execution_time_ms=execution_time,
-        )
-        return exec_result
-
-    async def _step_verification(self, state: PipelineState, message: str) -> dict[str, Any]:
-        """Execute verification step with detailed feedback."""
-        logger.info(
-            f"{PipelineStep.VERIFICATION.value}: {PipelineStepDescription.VERIFICATION.value}"
-        )
-        verification_prompt = (
-            build_verification_system_prompt() if self.settings.use_llm_verification else None
-        )
-        start_time = time.time()
-        
-        results_for_verification: list[dict[str, Any]] = state.sql_results or []
-        sql_for_verification: str = state.sql_query or ""
-        
-        # verify now returns VerificationResult instead of bool
-        verification_result: VerificationResult = await self.verifier.verify(
-            results_for_verification, sql_for_verification, message
-        )
-        
-        execution_time = (time.time() - start_time) * 1000
-        
-        # Store detailed feedback in state for retry logic
-        state.verification_passed = verification_result.passed
-        state.verification_issues = verification_result.issues
-        state.verification_suggestion = verification_result.suggestion
-        state.verification_insight = verification_result.insight
-        
-        result_dict = verification_result.to_dict()
-        
-        self.session_logger.log_agent_response(
-            agent_name="ResultVerifier",
-            raw_response=json.dumps(result_dict, indent=2, ensure_ascii=False),
-            parsed_response=result_dict,
-            input_text=(f"SQL: {state.sql_query}\nResults: {len(state.sql_results or [])} rows"),
-            system_prompt=verification_prompt,
-            execution_time_ms=execution_time,
-        )
-        
-        return result_dict
-    
-    async def _step_sql_with_verification_retry(
-        self,
-        state: PipelineState,
-        message: str,
-        max_verification_retries: int = 2,
-        mcp: Any | None = None,
-        db_tools: DelfosTools | None = None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        """
-        Execute SQL generation -> execution -> verification with retry loop.
-
-        If verification fails (e.g., 0 results), retries SQL generation with feedback.
-
-        Args:
-            state: Pipeline state
-            message: User's original message
-            max_verification_retries: Max times to retry after verification failure
-            mcp: Optional MCP connection
-            db_tools: Optional DelfosTools instance for direct DB access
-
-        Yields:
-            Step events for streaming
-        """
-        verification_attempt = 0
-
-        while verification_attempt < max_verification_retries:
-            # Build retry context if this is a retry attempt
-            retry_message = message
-            if verification_attempt > 0 and state.verification_issues:
-                retry_message = build_sql_retry_user_input(
-                    original_question=message,
-                    previous_sql=state.sql_query or "",
-                    verification_issues=state.verification_issues,
-                    verification_suggestion=state.verification_suggestion,
-                )
-                logger.info(
-                    f"Verification retry attempt {verification_attempt + 1}/{max_verification_retries}"
-                )
-
-                # Reset SQL state for retry
-                state.reset_sql_state()
-
-            # Step 4: SQL GENERATION (with validation retry loop inside)
-            sql_result = await self._step_sql_generation(
-                state,
-                retry_message if verification_attempt > 0 else message,
-                max_retries=2,
-                mcp=mcp,
-                db_tools=db_tools,
-            )
-            yield {
-                "step": "sql_generation",
-                "result": sql_result,
-                "state": {"sql_query": state.sql_query},
-                "verification_attempt": verification_attempt + 1,
-            }
-
-            if sql_result.get("error"):
-                # SQL generation failed, exit retry loop
-                return
-
-            # Step 5: SQL EXECUTION
-            exec_result = await self._step_sql_execution(state, mcp=mcp, db_tools=db_tools)
-            yield {
-                "step": "sql_execution",
-                "result": exec_result,
-                "state": {
-                    "total_filas": state.total_filas,
-                    "sql_resumen": state.sql_resumen,
-                },
-                "verification_attempt": verification_attempt + 1,
-            }
-            
-            # Step 6: VERIFICATION
-            verification_result = await self._step_verification(state, message)
-            yield {
-                "step": "verification",
-                "result": verification_result,
-                "state": {
-                    "verification_passed": state.verification_passed,
-                    "verification_issues": state.verification_issues,
-                },
-                "verification_attempt": verification_attempt + 1,
-            }
-            
-            # Check if verification passed
-            if state.verification_passed:
-                logger.info(
-                    f"Verification passed on attempt {verification_attempt + 1}"
-                )
-                return
-            
-            # Verification failed - decide whether to retry
-            verification_attempt += 1
-            
-            if verification_attempt < max_verification_retries:
-                logger.warning(
-                    f"Verification failed (attempt {verification_attempt}/{max_verification_retries}). "
-                    f"Issues: {state.verification_issues}. Retrying..."
-                )
-            else:
-                logger.warning(
-                    f"Verification failed after {max_verification_retries} attempts. "
-                    f"Final issues: {state.verification_issues}"
-                )
 
     async def _step_visualization(
         self,
         state: PipelineState,
         message: str,
-        mcp: Any | None = None,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any] | None:
         """Execute visualization step."""
         if not (state.viz_required and state.sql_results):
             return None
 
-        logger.info(f"{PipelineStep.VIZ.value}: {PipelineStepDescription.VIZ.value}")
-        viz_prompt = build_viz_prompt()
-        start_time = time.time()
+        archetype_letter = get_archetype_letter_by_name(state.arquetipo or "")
+        if archetype_letter:
+            temporality = Temporality(state.temporality) if state.temporality else Temporality.STATIC
+            state.tipo_grafico = get_chart_type_for_archetype(
+                archetype_letter,
+                temporality=temporality,
+                subject_cardinality=state.subject_cardinality,
+            )
+        else:
+            state.tipo_grafico = None
+        logger.info(
+            "Determined chart type: %s for archetype: %s", state.tipo_grafico, state.arquetipo
+        )
 
-        state.tipo_grafico = get_chart_type_for_archetype(get_archetype_letter_by_name(state.arquetipo))
-        logger.info(f"Determined chart type: {state.tipo_grafico} for archetype: {state.arquetipo}")
+        if state.tipo_grafico == ChartType.STACKED_BAR:
+            state.tipo_grafico = self._guard_stacked_bar(state.sql_results)
 
+        viz_prompt = build_viz_mapping_prompt(chart_type=state.tipo_grafico)
         viz_input = {
             "user_id": state.user_id,
-            "sql_results": {
-                "pregunta_original": message,
-                "sql": state.sql_query or "",
-                "tablas": state.selected_tables or [],
-                "resultados": state.sql_results,
-                "total_filas": len(state.sql_results or []),
-                "resumen": state.sql_resumen or "",
-            },
+            "columns": list(state.sql_results[0].keys()) if state.sql_results else [],
+            "sample_rows": (state.sql_results or [])[:3],
+            "total_filas": len(state.sql_results or []),
             "original_question": message,
-            "tipo_grafico": state.tipo_grafico
+            "tipo_grafico": state.tipo_grafico,
         }
 
-        viz_result = await self.viz.generate(
-            state.sql_results,
-            state.user_id,
-            message,
-            sql_query=state.sql_query,
-            tablas=state.selected_tables,
-            resumen=state.sql_resumen,
-            chart_type=state.tipo_grafico,
-        )
-        execution_time = (time.time() - start_time) * 1000
-        state.powerbi_url = viz_result.get("powerbi_url")
-        state.image_url = viz_result.get("image_url")
-        state.run_id = viz_result.get("run_id")
-        self.session_logger.log_agent_response(
-            agent_name="VisualizationService",
-            raw_response=json.dumps(viz_result, indent=2, ensure_ascii=False),
-            parsed_response=viz_result,
+        async with timed_step(
+            PipelineStep.VIZ, self.session_logger, "VisualizationService",
             input_text=json.dumps(viz_input, indent=2, ensure_ascii=False),
             system_prompt=viz_prompt,
-            execution_time_ms=execution_time,
-        )
+        ) as ctx:
+            viz_result = await self.viz.generate(
+                state.sql_results,
+                state.user_id,
+                message,
+                sql_query=state.sql_query,
+                tablas=state.selected_tables,
+                resumen=state.sql_resumen,
+                chart_type=state.tipo_grafico,
+            )
+            state.powerbi_url = viz_result.get("powerbi_url")
+            state.data_points = viz_result.get("data_points")
+            state.metric_name = viz_result.get("metric_name")
+            state.run_id = viz_result.get("run_id")
+            state.x_axis_name = viz_result.get("x_axis_name")
+            state.y_axis_name = viz_result.get("y_axis_name")
+            state.series_name = viz_result.get("series_name")
+            state.category_name = viz_result.get("category_name")
+            ctx.set_result(viz_result)
         return viz_result
-
-    async def _step_graph(
-        self, state: PipelineState, viz_result: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        """Execute graph generation step."""
-        if not (viz_result and viz_result.get("data_points") and viz_result.get("run_id")):
-            return None
-
-        logger.info(f"{PipelineStep.GRAPH.value}: {PipelineStepDescription.GRAPH.value}")
-        try:
-            start_time = time.time()
-            run_id = str(viz_result.get("run_id"))
-            chart_type = state.tipo_grafico
-            title = (
-                viz_result.get("metric_name")
-                or state.sql_resumen
-                or "Visualizacion de resultados"
-            )
-            graph_result = await self.graph.generate(
-                run_id=run_id,
-                chart_type=chart_type,
-                data_points=viz_result.get("data_points", []),
-                title=title,
-            )
-            execution_time = (time.time() - start_time) * 1000
-            state.image_url = graph_result.image_url
-            state.html_url = graph_result.html_url
-            state.png_url = graph_result.png_url
-            graph_response = {
-                "image_url": graph_result.image_url,
-                "html_url": graph_result.html_url,
-                "png_url": graph_result.png_url,
-                "html_path": graph_result.html_path,
-                "png_path": graph_result.png_path,
-            }
-            self.session_logger.log_agent_response(
-                agent_name="GraphService",
-                raw_response=json.dumps(graph_response, indent=2, ensure_ascii=False),
-                parsed_response=graph_response,
-                input_text=(f"Run ID: {run_id}\nChart Type: {chart_type}"),
-                execution_time_ms=execution_time,
-            )
-            return graph_response
-        except Exception as e:
-            logger.warning(f"Graph generation failed: {e}")
-            return {"error": str(e)}
 
     async def _step_format(self, state: PipelineState) -> dict[str, Any]:
         """Execute response formatting step."""
-        logger.info(f"{PipelineStep.FORMAT.value}: {PipelineStepDescription.FORMAT.value}")
         format_prompt = build_format_prompt() if self.settings.use_llm_formatting else None
-        start_time = time.time()
-        state.final_response = await self.formatter.format(state)
-        execution_time = (time.time() - start_time) * 1000
-        self.session_logger.log_agent_response(
-            agent_name="ResponseFormatter",
-            raw_response=json.dumps(state.final_response, indent=2, ensure_ascii=False),
-            parsed_response=state.final_response,
-            input_text=json.dumps(
-                {
-                    "intent": state.intent,
-                    "pattern_type": state.pattern_type,
-                    "arquetipo": state.arquetipo,
-                    "sql_results_count": len(state.sql_results or []),
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
-            system_prompt=format_prompt,
-            execution_time_ms=execution_time,
+        format_input = json.dumps(
+            {
+                "intent": state.intent,
+                "pattern_type": state.pattern_type,
+                "arquetipo": state.arquetipo,
+                "sql_results_count": len(state.sql_results or []),
+            },
+            indent=2,
+            ensure_ascii=False,
         )
+        async with timed_step(
+            PipelineStep.FORMAT, self.session_logger, "ResponseFormatter",
+            input_text=format_input, system_prompt=format_prompt,
+        ) as ctx:
+            state.final_response = await self.formatter.format(state)
+            ctx.set_result(state.final_response)
         return state.final_response
+
+    @staticmethod
+    def _build_sql_message(message: str, context: ConversationContext) -> str:
+        """Enriquecer mensaje con contexto de conversacion para preguntas de seguimiento."""
+        if not context.last_query:
+            return message
+
+        parts = [
+            "## Contexto de conversación",
+            f"Pregunta anterior: \"{context.last_query}\"",
+        ]
+
+        if context.last_sql:
+            parts.append(
+                "SQL anterior (referencia de tablas, columnas y entidades usadas):\n"
+                f"```sql\n{context.last_sql}\n```\n"
+                "**IMPORTANTE**: El SQL anterior es SOLO referencia para identificar"
+                " tablas, entidades y métricas relevantes."
+                " La estructura temporal (agrupación por año/mes vs. agregado estático)"
+                " se define por las instrucciones del sistema, NO por el SQL anterior.\n"
+                "**ADVERTENCIA**: Los nombres de entidad (NOMBRE_ENTIDAD) del SQL anterior"
+                " pueden ser INCORRECTOS. SIEMPRE verificar con"
+                " get_distinct_values antes de usarlos en WHERE."
+            )
+
+        if context.last_columns:
+            parts.append(f"Columnas resultado: {', '.join(context.last_columns)}")
+
+        if context.last_tables:
+            parts.append(f"Tablas usadas: {', '.join(context.last_tables)}")
+
+        parts.append(f"\n## Pregunta actual\n{message}")
+        return "\n".join(parts)
 
     async def process(self, message: str, user_id: str) -> dict[str, Any]:
         """
@@ -709,159 +477,81 @@ class PipelineOrchestrator:
 
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
-        mcp = None
-        mcp_ctx = None
-
-        # Use direct DB tools if enabled, otherwise use MCP
-        if not (self.settings.use_direct_db and self.db_tools):
-            mcp_ctx = mcp_connection(self.settings)
-
         try:
-            if mcp_ctx is not None:
-                mcp = await mcp_ctx.__aenter__()
-
-            # Get context and check if we have previous data
             context = ConversationStore.get(user_id)
-            has_context = context.last_results is not None and len(context.last_results) > 0
-
-            # Generate context summary for triage (if we have data)
+            has_context = bool(context.last_results)
             context_summary = context.get_summary() if has_context else None
+            conversation_history = context.get_history_summary(self.settings.max_history_turns)
 
             if context_summary:
-                logger.info(f"Context available: {len(context.last_results)} rows from previous query")
+                logger.info(
+                    "Context available: %s rows from previous query",
+                    len(context.last_results or []),
+                )
 
-            # Step 1: TRIAGE (with context summary)
-            triage_result = await self._step_triage(
-                state, message, has_context, context_summary, mcp=mcp, db_tools=self.db_tools
+            # Record user turn in history BEFORE processing
+            ConversationStore.add_turn(
+                user_id, "user", message,
+                max_history_turns=self.settings.max_history_turns,
             )
 
-            # Route based on query_type
-            if state.query_type == "greeting":
-                response = self.greeting_handler.handle(message)
+            await self._step_triage(
+                state, message, has_context, context_summary,
+                conversation_history=conversation_history,
+                db_tools=self.db_tools,
+            )
+
+            handler_response = await self.handler_router.route(state, message, user_id, context)
+            if handler_response is not None:
+                # Record assistant turn for handler responses
+                response_text = handler_response.get("insight") or handler_response.get("clarification_question") or ""
+                ConversationStore.add_turn(
+                    user_id, "assistant", response_text,
+                    query_type=state.query_type,
+                    had_viz=handler_response.get("visualizacion") == "YES",
+                    max_history_turns=self.settings.max_history_turns,
+                )
                 self.session_logger.end_session(
                     success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    final_message=json.dumps(handler_response, indent=2, ensure_ascii=False),
                     errors=[],
                 )
-                return response
+                return handler_response
 
-            elif state.query_type == "follow_up":
-                response = await self.follow_up_handler.handle(message, context)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
+            intent_result = await self._step_intent(state, message, context=context)
+            if state.pattern_type != PatternType.COMPARACION:
+                # Record assistant turn for non-comparacion
+                ConversationStore.add_turn(
+                    user_id, "assistant", intent_result.get("reasoning", ""),
+                    query_type=state.query_type,
+                    max_history_turns=self.settings.max_history_turns,
                 )
-                return response
-
-            elif state.query_type == "viz_request":
-                response = await self.viz_request_handler.handle(message, user_id, context)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                return response
-
-            elif state.query_type in ("general", "out_of_scope"):
-                response = await self.general_handler.handle(message)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                return response
-
-            elif state.query_type == "data_question":
-                pass
-
-            else:
-                response = await self.general_handler.handle(message)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                return response
-
-            # Step 2: INTENT
-            intent_result = await self._step_intent(state, message)
-            if state.pattern_type != "comparacion":
                 return intent_result
 
-            # Step 3: SCHEMA
-            await self._step_schema(state, message, mcp=mcp, db_tools=self.db_tools)
+            await self._step_schema(state, message, db_tools=self.db_tools)
 
-            # Steps 4-6: SQL GENERATION + EXECUTION + VERIFICATION with retry
-            max_verification_retries = 2
-            verification_attempt = 0
+            sql_message = self._build_sql_message(message, context)
 
-            while verification_attempt < max_verification_retries:
-                retry_message = message
-                if verification_attempt > 0 and state.verification_issues:
-                    retry_message = build_sql_retry_user_input(
-                        original_question=message,
-                        previous_sql=state.sql_query or "",
-                        verification_issues=state.verification_issues,
-                        verification_suggestion=state.verification_suggestion,
-                    )
-                    logger.info(
-                        f"Verification retry attempt {verification_attempt + 1}/{max_verification_retries}"
-                    )
-                    state.reset_sql_state()
-
-                # Step 4: SQL_GENERATION (includes validation)
-                sql_result = await self._step_sql_generation(
-                    state,
-                    retry_message if verification_attempt > 0 else message,
-                    max_retries=2,
-                    mcp=mcp,
-                    db_tools=self.db_tools,
+            sql_error = await self.sql_flow.execute(
+                state,
+                sql_message,
+                db_tools=self.db_tools,
+            )
+            if sql_error:
+                errors.append(sql_error.get("error", ""))
+                self.session_logger.end_session(
+                    success=False,
+                    final_message=json.dumps(sql_error, indent=2, ensure_ascii=False),
+                    errors=errors,
                 )
-                if sql_result.get("error"):
-                    errors.append(sql_result.get("error", ""))
-                    self.session_logger.end_session(
-                        success=False,
-                        final_message=json.dumps(sql_result, indent=2, ensure_ascii=False),
-                        errors=errors,
-                    )
-                    return sql_result
+                return sql_error
 
-                # Step 5: SQL_EXECUTION
-                await self._step_sql_execution(state, mcp=mcp, db_tools=self.db_tools)
+            viz_result = await self._step_visualization(
+                state, message, db_tools=self.db_tools
+            )
 
-                # Step 6: VERIFICATION
-                await self._step_verification(state, message)
-
-                if state.verification_passed:
-                    logger.info(f"Verification passed on attempt {verification_attempt + 1}")
-                    break
-                    
-                verification_attempt += 1
-                if verification_attempt < max_verification_retries:
-                    logger.warning(
-                        f"Verification failed (attempt {verification_attempt}/{max_verification_retries}). "
-                        f"Issues: {state.verification_issues}. Retrying..."
-                    )
-                else:
-                    logger.warning(
-                        f"Verification failed after {max_verification_retries} attempts. "
-                        f"Final issues: {state.verification_issues}"
-                    )
-
-            # Step 7: VISUALIZATION
-            viz_result = await self._step_visualization(state, message, mcp=mcp, db_tools=self.db_tools)
-
-            # Step 8: GRAPH
-            if viz_result:
-                graph_result = await self._step_graph(state, viz_result)
-                if graph_result and "error" in graph_result:
-                    errors.append(graph_result["error"])
-
-            # Step 9: FORMAT
             final_response = await self._step_format(state)
 
-            # Save context for follow-up questions
             ConversationStore.update(
                 user_id=user_id,
                 query=message,
@@ -871,9 +561,19 @@ class PipelineOrchestrator:
                 chart_type=state.tipo_grafico,
                 run_id=state.run_id,
                 data_points=viz_result.get("data_points") if viz_result else None,
-                tables=state.schema_context.get("tables", []) if state.schema_context else [],
+                tables=state.resolved_tables,
                 schema_context=state.schema_context,
                 title=state.titulo_grafica,
+                temporality=state.temporality,
+            )
+
+            # Record assistant turn for data queries
+            ConversationStore.add_turn(
+                user_id, "assistant", final_response.get("insight", ""),
+                query_type=state.query_type,
+                had_viz=state.viz_required,
+                tables_used=state.resolved_tables,
+                max_history_turns=self.settings.max_history_turns,
             )
 
             self.session_logger.end_session(
@@ -884,7 +584,7 @@ class PipelineOrchestrator:
             return final_response
 
         except Exception as e:
-            logger.error(f"Pipeline error: {e}", exc_info=True)
+            logger.error("Pipeline error: %s", e, exc_info=True)
             errors.append(f"Pipeline error: {str(e)}")
             self.session_logger.end_session(
                 success=False,
@@ -892,9 +592,6 @@ class PipelineOrchestrator:
                 errors=errors,
             )
             raise
-        finally:
-            if mcp_ctx is not None:
-                await mcp_ctx.__aexit__(None, None, None)
 
     async def process_stream(
         self, message: str, user_id: str
@@ -914,30 +611,28 @@ class PipelineOrchestrator:
 
         self.session_logger.start_session(user_id=user_id, user_message=message)
 
-        mcp = None
-        mcp_ctx = None
-
-        # Use direct DB tools if enabled, otherwise use MCP
-        if not (self.settings.use_direct_db and self.db_tools):
-            mcp_ctx = mcp_connection(self.settings)
-
         try:
-            if mcp_ctx is not None:
-                mcp = await mcp_ctx.__aenter__()
-
-            # Get context and check if we have previous data
             context = ConversationStore.get(user_id)
-            has_context = context.last_results is not None and len(context.last_results) > 0
-
-            # Generate context summary for triage (if we have data)
+            has_context = bool(context.last_results)
             context_summary = context.get_summary() if has_context else None
+            conversation_history = context.get_history_summary(self.settings.max_history_turns)
 
             if context_summary:
-                logger.info(f"Context available: {len(context.last_results)} rows from previous query")
+                logger.info(
+                    "Context available: %s rows from previous query",
+                    len(context.last_results or []),
+                )
 
-            # Step 1: TRIAGE (with context summary)
+            # Record user turn in history BEFORE processing
+            ConversationStore.add_turn(
+                user_id, "user", message,
+                max_history_turns=self.settings.max_history_turns,
+            )
+
             triage_result = await self._step_triage(
-                state, message, has_context, context_summary, mcp=mcp, db_tools=self.db_tools
+                state, message, has_context, context_summary,
+                conversation_history=conversation_history,
+                db_tools=self.db_tools,
             )
             yield {
                 "step": "triage",
@@ -945,62 +640,25 @@ class PipelineOrchestrator:
                 "state": {"query_type": state.query_type},
             }
 
-            # Route based on query_type
-            if state.query_type == "greeting":
-                response = self.greeting_handler.handle(message)
+            handler_response = await self.handler_router.route(state, message, user_id, context)
+            if handler_response is not None:
+                # Record assistant turn for handler responses
+                response_text = handler_response.get("insight") or handler_response.get("clarification_question") or ""
+                ConversationStore.add_turn(
+                    user_id, "assistant", response_text,
+                    query_type=state.query_type,
+                    had_viz=handler_response.get("visualizacion") == "YES",
+                    max_history_turns=self.settings.max_history_turns,
+                )
                 self.session_logger.end_session(
                     success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
+                    final_message=json.dumps(handler_response, indent=2, ensure_ascii=False),
                     errors=[],
                 )
-                yield {"step": "complete", "response": response}
+                yield {"step": "complete", "response": handler_response}
                 return
 
-            elif state.query_type == "follow_up":
-                response = await self.follow_up_handler.handle(message, context)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                yield {"step": "complete", "response": response}
-                return
-
-            elif state.query_type == "viz_request":
-                response = await self.viz_request_handler.handle(message, user_id, context)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                yield {"step": "complete", "response": response}
-                return
-
-            elif state.query_type in ("general", "out_of_scope"):
-                response = await self.general_handler.handle(message)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                yield {"step": "complete", "response": response}
-                return
-
-            elif state.query_type == "data_question":
-                pass
-
-            else:
-                response = await self.general_handler.handle(message)
-                self.session_logger.end_session(
-                    success=True,
-                    final_message=json.dumps(response, indent=2, ensure_ascii=False),
-                    errors=[],
-                )
-                yield {"step": "complete", "response": response}
-                return
-
-            # Step 2: INTENT
-            intent_result = await self._step_intent(state, message)
+            intent_result = await self._step_intent(state, message, context=context)
             yield {
                 "step": "intent",
                 "result": intent_result,
@@ -1011,26 +669,35 @@ class PipelineOrchestrator:
                     "viz_required": state.viz_required,
                 },
             }
-            if state.pattern_type != "comparacion":
+            if state.pattern_type != PatternType.COMPARACION:
+                # Record assistant turn for non-comparacion
+                ConversationStore.add_turn(
+                    user_id, "assistant", intent_result.get("reasoning", ""),
+                    query_type=state.query_type,
+                    max_history_turns=self.settings.max_history_turns,
+                )
                 yield {"step": "complete", "response": intent_result}
                 return
 
-            # Step 3: SCHEMA
-            schema_result = await self._step_schema(state, message, mcp=mcp, db_tools=self.db_tools)
+            schema_result = await self._step_schema(state, message, db_tools=self.db_tools)
             yield {
                 "step": "schema",
                 "result": schema_result,
                 "state": {"selected_tables": state.selected_tables},
             }
 
-            # Steps 4-6: SQL GENERATION + EXECUTION + VERIFICATION with retry
-            async for sql_event in self._step_sql_with_verification_retry(
-                state, message, max_verification_retries=2, mcp=mcp, db_tools=self.db_tools
+            sql_message = self._build_sql_message(message, context)
+
+            async for sql_event in self.sql_flow.execute_streaming(
+                state,
+                sql_message,
+                db_tools=self.db_tools,
             ):
                 yield sql_event
-                
-                # Check if SQL generation failed
-                if sql_event.get("step") == "sql_generation" and sql_event.get("result", {}).get("error"):
+
+                if sql_event.get("step") == "sql_generation" and sql_event.get("result", {}).get(
+                    "error"
+                ):
                     errors.append(sql_event["result"].get("error", ""))
                     self.session_logger.end_session(
                         success=False,
@@ -1040,8 +707,9 @@ class PipelineOrchestrator:
                     yield {"step": "complete", "response": sql_event["result"]}
                     return
 
-            # Step 7: VISUALIZATION
-            viz_result = await self._step_visualization(state, message, mcp=mcp, db_tools=self.db_tools)
+            viz_result = await self._step_visualization(
+                state, message, db_tools=self.db_tools
+            )
             if viz_result:
                 yield {
                     "step": "visualization",
@@ -1053,22 +721,7 @@ class PipelineOrchestrator:
                     },
                 }
 
-                # Step 8: GRAPH
-                graph_result = await self._step_graph(state, viz_result)
-                if graph_result:
-                    if "error" in graph_result:
-                        errors.append(graph_result["error"])
-                    yield {
-                        "step": "graph",
-                        "result": graph_result,
-                        "state": {
-                            "image_url": state.image_url,
-                            "html_url": state.html_url,
-                            "png_url": state.png_url,
-                        },
-                    }
-
-            # Step 9: FORMAT
+            # Step: FORMAT
             final_response = await self._step_format(state)
             yield {
                 "step": "format",
@@ -1085,9 +738,19 @@ class PipelineOrchestrator:
                 chart_type=state.tipo_grafico,
                 run_id=state.run_id,
                 data_points=viz_result.get("data_points") if viz_result else None,
-                tables=state.schema_context.get("tables", []) if state.schema_context else [],
+                tables=state.resolved_tables,
                 schema_context=state.schema_context,
                 title=state.titulo_grafica,
+                temporality=state.temporality,
+            )
+
+            # Record assistant turn for data queries
+            ConversationStore.add_turn(
+                user_id, "assistant", final_response.get("insight", ""),
+                query_type=state.query_type,
+                had_viz=state.viz_required,
+                tables_used=state.resolved_tables,
+                max_history_turns=self.settings.max_history_turns,
             )
 
             self.session_logger.end_session(
@@ -1098,7 +761,7 @@ class PipelineOrchestrator:
             yield {"step": "complete", "response": final_response}
 
         except Exception as e:
-            logger.error(f"Pipeline error: {e}", exc_info=True)
+            logger.error("Pipeline error: %s", e, exc_info=True)
             errors.append(f"Pipeline error: {str(e)}")
             self.session_logger.end_session(
                 success=False,
@@ -1106,55 +769,60 @@ class PipelineOrchestrator:
                 errors=errors,
             )
             yield {"step": "error", "error": str(e)}
-        finally:
-            if mcp_ctx is not None:
-                await mcp_ctx.__aexit__(None, None, None)
+
+    _TEMPORAL_COLUMNS = {"year", "month", "fecha", "periodo", "date"}
+
+    def _guard_stacked_bar(self, rows: list[dict[str, Any]] | None) -> ChartType:
+        """Validate that data has a categorical column for stacking.
+
+        Stacked bar charts need at least one non-temporal string column.
+        Falls back to LINE when the data is purely numeric.
+        """
+        if not rows:
+            return ChartType.STACKED_BAR
+
+        first_row = rows[0]
+        has_categorical = any(
+            isinstance(value, str)
+            for col, value in first_row.items()
+            if col.lower() not in self._TEMPORAL_COLUMNS
+        )
+        if not has_categorical:
+            logger.info("No categorical column for stacking; falling back to LINE")
+            return ChartType.LINE
+        return ChartType.STACKED_BAR
 
     def _format_non_data_response(
         self, state: PipelineState, triage_result: dict[str, Any]
     ) -> dict[str, Any]:
         """Format response for non-data questions (general, out_of_scope)."""
-        
-        query_type_str = state.query_type or "general"
+        query_type_str = state.query_type or QueryType.GENERAL
         try:
             query_type = QueryType(query_type_str)
         except ValueError:
             query_type = QueryType.GENERAL
-            
+
         message = get_rejection_message(query_type)
         reasoning = triage_result.get("reasoning", message)
-        
-        return {
-            "patron": "general",
-            "datos": [],
-            "arquetipo": None,
-            "visualizacion": "NO",
-            "tipo_grafica": None,
-            "titulo_grafica": None,
-            "imagen": None,
-            "link_power_bi": None,
-            "insight": reasoning,
-            "error": "",
-        }
+
+        return build_response(patron=QueryType.GENERAL, insight=reasoning)
 
     def _format_non_comparacion_response(
         self, state: PipelineState, intent_result: dict[str, Any]
     ) -> dict[str, Any]:
         """Format response for non-comparacion questions."""
-        pattern_type = state.pattern_type
         reasoning = intent_result.get(
             "reasoning",
             "Este tipo de pregunta aun no esta soportada. Por favor, ingrese una pregunta de comparacion.",
         )
-        return {
-            "patron": pattern_type,
-            "datos": [{"NA": {}}],
-            "arquetipo": state.arquetipo,
-            "visualizacion": "NA",
-            "tipo_grafica": "NA",
-            "titulo_grafica": state.titulo_grafica,
-            "imagen": "NA",
-            "link_power_bi": "NA",
-            "insight": "NA",
-            "error": reasoning,
-        }
+        return build_response(
+            patron=state.pattern_type or "comparacion",
+            datos=[{"NA": {}}],
+            arquetipo=state.arquetipo,
+            visualizacion="NA",
+            tipo_grafica="NA",
+            titulo_grafica=state.titulo_grafica,
+            link_power_bi="NA",
+            insight="NA",
+            error=reasoning,
+        )

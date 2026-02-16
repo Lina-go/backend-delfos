@@ -1,6 +1,4 @@
-"""
-JSON Parser utility for extracting JSON from LLM responses.
-"""
+"""JSON Parser utility for extracting JSON from LLM responses."""
 
 import json
 import logging
@@ -14,12 +12,19 @@ class JSONParser:
     """Helper class to extract clean JSON from LLM responses."""
 
     @staticmethod
-    def _extract_first_json_object(text: str) -> dict[str, Any] | None:
-        """Extract the first complete JSON object from text using balanced brace matching.
+    def _try_parse(text: str) -> dict[str, Any] | None:
+        """Try to parse text as a JSON dict. Returns None on failure."""
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return None
 
-        This handles cases where multiple JSON objects are concatenated together.
-        Returns None if no valid JSON object is found.
-        """
+    @staticmethod
+    def _extract_first_json_object(text: str) -> dict[str, Any] | None:
+        """Extract the first complete JSON object from text using balanced brace matching."""
         brace_count = 0
         start_idx = -1
         in_string = False
@@ -29,7 +34,7 @@ class JSONParser:
             if escape_next:
                 escape_next = False
                 continue
-            if char == '\\' and in_string:
+            if char == "\\" and in_string:
                 escape_next = True
                 continue
             if char == '"' and not escape_next:
@@ -45,15 +50,18 @@ class JSONParser:
             elif char == "}":
                 brace_count -= 1
                 if brace_count == 0 and start_idx != -1:
-                    json_str = text[start_idx : i + 1]
-                    try:
-                        data = json.loads(json_str)
-                        if isinstance(data, dict):
-                            return data
-                    except json.JSONDecodeError:
-                        pass
-                    # Reset and try to find another object
+                    result = JSONParser._try_parse(text[start_idx : i + 1])
+                    if result is not None:
+                        return result
                     start_idx = -1
+        return None
+
+    @staticmethod
+    def _try_code_block(text: str) -> dict[str, Any] | None:
+        """Try to extract JSON from a markdown code block."""
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if match:
+            return JSONParser._try_parse(match.group(1))
         return None
 
     @staticmethod
@@ -61,128 +69,67 @@ class JSONParser:
         """Attempts to extract a JSON object from text.
 
         If no valid JSON object can be extracted, returns an empty dict.
-        Handles concatenated JSON objects by extracting the first valid one.
         """
-        # Try pure JSON first (if the whole text is valid JSON)
-        try:
-            data = json.loads(text)
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
-            pass
+        # Try pure JSON first
+        result = JSONParser._try_parse(text)
+        if result is not None:
+            return result
 
-        # PRIORITY 1: Try to find JSON inside <answer> tags first (used by visualization service)
-        # This is checked early because <answer> is the expected output format
+        # PRIORITY 1: <answer> tags (used by visualization service)
         answer_match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL | re.IGNORECASE)
         if not answer_match:
-            # Try to match unclosed <answer> tag (for truncated responses)
             answer_match = re.search(r"<answer>(.*)", text, re.DOTALL | re.IGNORECASE)
 
         if answer_match:
-            answer_content = answer_match.group(1).strip()
-            logger.debug(f"Found <answer> tag content (length: {len(answer_content)})")
+            content = answer_match.group(1).strip()
+            logger.debug("Found <answer> tag content (length: %s)", len(content))
 
-            # First try to parse the entire answer content as JSON
-            try:
-                data = json.loads(answer_content)
-                if isinstance(data, dict):
-                    return data
-            except json.JSONDecodeError:
-                pass
+            result = JSONParser._try_parse(content)
+            if result is not None:
+                return result
 
-            # Try to find JSON in code blocks
-            json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", answer_content, re.DOTALL)
-            if json_match:
-                try:
-                    data = json.loads(json_match.group(1))
-                    if isinstance(data, dict):
-                        return data
-                except json.JSONDecodeError:
-                    pass
+            result = JSONParser._try_code_block(content)
+            if result is not None:
+                return result
 
-            # Use balanced brace matching (more reliable than greedy regex)
-            first_obj = JSONParser._extract_first_json_object(answer_content)
-            if first_obj:
-                return first_obj
+            result = JSONParser._extract_first_json_object(content)
+            if result is not None:
+                return result
 
-        # PRIORITY 2: Try to find JSON inside <classification> tags (used by triage)
+        # PRIORITY 2: <classification> tags (used by triage)
         classification_match = re.search(
             r"<classification>(.*?)</classification>", text, re.DOTALL | re.IGNORECASE
         )
         if classification_match:
-            classification_content = classification_match.group(1).strip()
-            # Try to find JSON in the classification content
-            json_match = re.search(
-                r"```(?:json)?\s*(\{.*?\})\s*```", classification_content, re.DOTALL
-            )
-            if json_match:
-                try:
-                    data = json.loads(json_match.group(1))
-                    if isinstance(data, dict):
-                        return data
-                except json.JSONDecodeError:
-                    pass
-            # Try to find any JSON object in classification content (more precise matching)
-            # Use a balanced brace matcher to find complete JSON objects
-            brace_count = 0
-            start_idx = -1
-            for i, char in enumerate(classification_content):
-                if char == "{":
-                    if start_idx == -1:
-                        start_idx = i
-                    brace_count += 1
-                elif char == "}":
-                    brace_count -= 1
-                    if brace_count == 0 and start_idx != -1:
-                        json_str = classification_content[start_idx : i + 1]
-                        try:
-                            data = json.loads(json_str)
-                            if isinstance(data, dict):
-                                return data
-                        except json.JSONDecodeError:
-                            pass
-                        start_idx = -1
-            # Fallback: try simple regex if balanced matching didn't work
-            json_match = re.search(
-                r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", classification_content, re.DOTALL
-            )
-            if json_match:
-                try:
-                    data = json.loads(json_match.group(1))
-                    if isinstance(data, dict):
-                        return data
-                except json.JSONDecodeError:
-                    pass
+            content = classification_match.group(1).strip()
+
+            result = JSONParser._try_code_block(content)
+            if result is not None:
+                return result
+
+            result = JSONParser._extract_first_json_object(content)
+            if result is not None:
+                return result
 
         # PRIORITY 3: Generic fallbacks
-        # Try extracting first complete JSON object from full text
-        first_obj = JSONParser._extract_first_json_object(text)
-        if first_obj:
-            return first_obj
+        result = JSONParser._extract_first_json_object(text)
+        if result is not None:
+            return result
 
-        # Fallback: try to find JSON in code blocks
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(1))
-                if isinstance(data, dict):
-                    return data
-            except json.JSONDecodeError:
-                pass
-        # Fallback: try to find any JSON object
+        result = JSONParser._try_code_block(text)
+        if result is not None:
+            return result
+
+        # Last resort: greedy regex
         match = re.search(r"(\{.*\})", text, re.DOTALL)
         if match:
-            try:
-                data = json.loads(match.group(1))
-                if isinstance(data, dict):
-                    return data
-            except json.JSONDecodeError:
-                pass
+            result = JSONParser._try_parse(match.group(1))
+            if result is not None:
+                return result
 
-        # Log warning and return empty dict
-        # Callers should check for empty dict and handle appropriately
         logger.warning(
-            f"JSONParser: Could not extract JSON from text (length: {len(text)} chars). "
-            f"First 200 chars: {text[:200]}"
+            "JSONParser: Could not extract JSON from text (length: %s chars). First 200 chars: %s",
+            len(text),
+            text[:200],
         )
         return {}

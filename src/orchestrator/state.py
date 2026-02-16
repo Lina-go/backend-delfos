@@ -20,6 +20,9 @@ class PipelineState:
     pattern_type: str | None = None  # comparacion | relacion | proyeccion | simulacion
     arquetipo: str | None = None
     titulo_grafica: str | None = None
+    is_tasa: bool = False
+    temporality: str | None = None  # "estatico" or "temporal"
+    subject_cardinality: int = 1  # Number of subjects in the question
 
     # Step 3: Schema
     selected_tables: list[str] = field(default_factory=list)
@@ -27,6 +30,7 @@ class PipelineState:
 
     # Step 4-5: SQL
     sql_query: str | None = None
+    sql_tables: list[str] = field(default_factory=list)
     sql_results: list[Any] | None = None
     total_filas: int = 0
     sql_resumen: str | None = None
@@ -42,17 +46,31 @@ class PipelineState:
     viz_required: bool = False
     tipo_grafico: str | None = None
     powerbi_url: str | None = None
-    image_url: str | None = None
-    html_url: str | None = None
-    png_url: str | None = None
+    data_points: list[dict[str, Any]] | None = None
+    metric_name: str | None = None
     run_id: str | None = None
+    x_axis_name: str | None = None
+    y_axis_name: str | None = None
+    series_name: str | None = None
+    category_name: str | None = None
 
     # Step 8: Final response
     final_response: dict[str, Any] | None = None
 
+    @property
+    def resolved_tables(self) -> list[str]:
+        """Tables to associate with this query.
+
+        Prefers the schema-selected tables; falls back to the tables
+        reported by the SQL generator when schema context is absent.
+        """
+        schema_tables = self.schema_context.get("tables", []) if self.schema_context else []
+        return schema_tables or self.sql_tables
+
     def reset_sql_state(self) -> None:
         """Reset SQL-related state for retry attempts."""
         self.sql_query = None
+        self.sql_tables = []
         self.sql_results = None
         self.total_filas = 0
         self.sql_resumen = None

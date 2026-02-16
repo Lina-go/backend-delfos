@@ -41,7 +41,7 @@ class SQLValidationService:
 
         # Log warnings for informational purposes
         if not is_valid:
-            logger.warning(f"SQL validation failed with {len(errors)} error(s): {errors}")
+            logger.warning("SQL validation failed with %s error(s): %s", len(errors), errors)
         else:
             logger.info("SQL validation passed")
 

@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from src.api.response import build_response
+from src.config.constants import QueryType
+
 
 class GreetingHandler:
     """Handles greetings, farewells, and thank you messages."""
@@ -14,7 +17,15 @@ class GreetingHandler:
     }
 
     KEYWORDS = {
-        "hola": ["hola", "buenos días", "buenas tardes", "buenas noches", "hey", "qué tal", "que tal"],
+        "hola": [
+            "hola",
+            "buenos días",
+            "buenas tardes",
+            "buenas noches",
+            "hey",
+            "qué tal",
+            "que tal",
+        ],
         "gracias": ["gracias", "thank", "te agradezco", "muchas gracias"],
         "chao": ["chao", "adiós", "adios", "bye", "hasta luego", "nos vemos"],
     }
@@ -29,14 +40,8 @@ class GreetingHandler:
                 response_key = key
                 break
 
-        return {
-            "patron": "greeting",
-            "datos": [],
-            "arquetipo": "NA",
-            "visualizacion": "NO",
-            "tipo_grafica": None,
-            "titulo_grafica": None,
-            "imagen": None,
-            "link_power_bi": None,
-            "insight": self.RESPONSES[response_key],
-        }
+        return build_response(
+            patron=QueryType.GREETING,
+            arquetipo="NA",
+            insight=self.RESPONSES[response_key],
+        )

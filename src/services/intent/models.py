@@ -10,7 +10,10 @@ class IntentResult(BaseModel):
 
     user_question: str
     intent: Intent
-    tipo_patron: str  # Pattern type as single letter (A-N)
-    arquetipo: str  # Analytical archetype
+    tipo_patron: str  # Pattern type (Comparación, Relación, Proyección, Simulación)
+    arquetipo: str  # Analytical archetype (A-K)
     razon: str | None = None  # Reasoning in Spanish
-    titulo_grafica: str | None = None # Title for the graph if applicable
+    titulo_grafica: str | None = None  # Title for the graph if applicable
+    is_tasa: bool = False  # Whether the question involves interest rates
+    temporality: str = "estatico"  # "estatico" or "temporal"
+    subject_cardinality: int = 1  # Number of subjects in the question

@@ -1,33 +1,115 @@
 """
 Delfos Database Tools - Direct database access for Agent Framework.
 
-This module provides the same functionality as delfos_mcp.py but as a class
-for use with Microsoft Agent Framework function tools.
+Supports dual connections:
+- Warehouse (WH) for agent READ operations (schema exploration, SQL execution)
+- SQL Database (DB) for app WRITE operations (insert_agent_output, etc.)
 
 Location: src/infrastructure/database/tools.py
 """
 
-import uuid
 import logging
+import queue
+import re
+import threading
+import uuid
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
 from datetime import datetime
 from typing import Annotated, Any
-from contextlib import contextmanager
 
 import pyodbc
 from pydantic import Field
 
+from src.infrastructure.database.connection import FabricConnectionFactory
+
 logger = logging.getLogger(__name__)
+
+
+class _ConnectionPool:
+    """Small thread-safe connection pool for pyodbc (not thread-safe per conn)."""
+
+    def __init__(self, factory: FabricConnectionFactory, label: str, max_size: int = 3):
+        self._factory = factory
+        self._label = label
+        self._max_size = max_size
+        self._pool: queue.Queue[pyodbc.Connection] = queue.Queue(maxsize=max_size)
+        self._created = 0
+        self._lock = threading.Lock()
+
+    def acquire(self) -> pyodbc.Connection:
+        """Get a connection from the pool or create a new one."""
+        try:
+            return self._pool.get_nowait()
+        except queue.Empty:
+            pass
+
+        with self._lock:
+            if self._created < self._max_size:
+                self._created += 1
+                try:
+                    conn = self._factory.create_connection()
+                    logger.info("%s pool: created connection %s/%s", self._label, self._created, self._max_size)
+                    return conn
+                except Exception:
+                    self._created -= 1
+                    raise
+
+        logger.debug("%s pool: at capacity, waiting for available connection", self._label)
+        return self._pool.get(timeout=30)
+
+    def release(self, conn: pyodbc.Connection) -> None:
+        """Return a healthy connection to the pool."""
+        try:
+            self._pool.put_nowait(conn)
+        except queue.Full:
+            with suppress(Exception):
+                conn.close()
+            with self._lock:
+                self._created -= 1
+
+    def discard(self, conn: pyodbc.Connection) -> None:
+        """Discard a broken connection (will be replaced on next acquire)."""
+        with suppress(Exception):
+            conn.close()
+        with self._lock:
+            self._created -= 1
+        logger.info("%s pool: discarded broken connection (%s/%s remaining)", self._label, self._created, self._max_size)
+
+    def close_all(self) -> None:
+        """Close all connections in the pool."""
+        closed = 0
+        while not self._pool.empty():
+            try:
+                conn = self._pool.get_nowait()
+                with suppress(Exception):
+                    conn.close()
+                closed += 1
+            except queue.Empty:
+                break
+        with self._lock:
+            self._created = 0
+        if closed:
+            logger.info("Closed %s %s pool connections", closed, self._label)
 
 
 class DelfosTools:
     """
     Database tools for Delfos SQL database interactions.
 
-    This class provides the same functionality as the FastMCP server tools
-    but can be used directly with Microsoft Agent Framework.
+    Uses two separate Fabric connection pools:
+    - WH (Warehouse) for all READ operations (agent tools, SQL execution)
+    - DB (SQL Database) for all WRITE operations (insert_agent_output_batch)
+
+    Connection pools allow concurrent tool calls to run in parallel.
 
     Usage:
-        tools = DelfosTools(connection_string="...", workspace_id="...", report_id="...")
+        tools = DelfosTools(
+            wh_factory=wh_factory,
+            db_factory=db_factory,
+            workspace_id="...",
+            report_id="...",
+        )
         agent = client.create_agent(
             instructions="...",
             tools=tools.get_exploration_tools()
@@ -41,52 +123,91 @@ class DelfosTools:
         "pie": "PieChart",
     }
 
+    @staticmethod
+    def _validate_identifier(name: str) -> str:
+        """Validate a SQL identifier to prevent injection."""
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
+            raise ValueError(f"Invalid SQL identifier: {name}")
+        return name
+
     def __init__(
         self,
-        connection_string: str,
+        wh_factory: FabricConnectionFactory,
+        db_factory: FabricConnectionFactory,
+        wh_schema: str = "gold",
+        db_schema: str = "dbo",
         workspace_id: str | None = None,
         report_id: str | None = None,
     ):
         """
-        Initialize DelfosTools with database and Power BI configuration.
+        Initialize DelfosTools with dual Fabric connection pools.
 
         Args:
-            connection_string: Azure SQL Database connection string.
+            wh_factory: Factory for Warehouse connections (reads).
+            db_factory: Factory for SQL Database connections (writes).
+            wh_schema: Schema for WH tables (default: gold).
+            db_schema: Schema for DB tables (default: dbo).
             workspace_id: Power BI workspace ID.
             report_id: Power BI report ID.
         """
-        self._connection_string = connection_string
+        self._wh_schema = wh_schema
+        self._db_schema = db_schema
         self._workspace_id = workspace_id
         self._report_id = report_id
-        pyodbc.pooling = True
-
-        if not self._connection_string:
-            raise ValueError("connection_string is required")
+        self._wh_pool = _ConnectionPool(wh_factory, label="WH", max_size=5)
+        self._db_pool = _ConnectionPool(db_factory, label="DB", max_size=2)
 
     @contextmanager
-    def _get_connection(self):
-        """Establish and return a connection to the Azure SQL Database."""
-        conn = pyodbc.connect(self._connection_string)
+    def _get_connection(self, pool: "_ConnectionPool") -> Generator[pyodbc.Connection, None, None]:
+        """Acquire a connection from the given pool, auto-release on exit."""
+        conn = pool.acquire()
         try:
             yield conn
-        finally:
-            conn.close()
+        except pyodbc.Error:
+            pool.discard(conn)
+            raise
+        except Exception:
+            pool.release(conn)
+            raise
+        else:
+            pool.release(conn)
+
+    def _get_wh_connection(self) -> Generator[pyodbc.Connection, None, None]:
+        """Acquire a WH connection from the pool."""
+        return self._get_connection(self._wh_pool)
+
+    def _get_db_connection(self) -> Generator[pyodbc.Connection, None, None]:
+        """Acquire a DB connection from the pool."""
+        return self._get_connection(self._db_pool)
+
+    def close(self) -> None:
+        """Close all pooled connections (call on shutdown)."""
+        self._wh_pool.close_all()
+        self._db_pool.close_all()
+
+    def _adapt_sql_for_wh(self, sql: str) -> str:
+        """Replace [dbo]. references with WH schema for read queries."""
+        return sql.replace("[dbo].", f"[{self._wh_schema}].")
+
+    # =========================================================================
+    # READ TOOLS — use WH connection
+    # =========================================================================
 
     def execute_sql_query(
-        self,
-        query: Annotated[str, Field(description="The SQL query to execute.")]
+        self, query: Annotated[str, Field(description="The SQL query to execute.")]
     ) -> str:
         """
-        Execute a SQL query against the Delfos database and return the results.
+        Execute a SQL query against the Delfos Warehouse and return the results.
 
         Args:
             query (str): The SQL query to execute.
         Returns:
             str: The results of the SQL query.
         """
-        with self._get_connection() as conn:
+        adapted_query = self._adapt_sql_for_wh(query)
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(query)
+            cursor.execute(adapted_query)
             results = cursor.fetchall()
             cursor.close()
 
@@ -95,21 +216,23 @@ class DelfosTools:
 
     def get_table_schema(
         self,
-        table_name: Annotated[str, Field(description="The name of the table to get the schema for.")]
+        table_name: Annotated[
+            str, Field(description="The name of the table to get the schema for.")
+        ],
     ) -> str:
         """
-        Retrieve the schema of a specified table in the Delfos database.
+        Retrieve the schema of a specified table in the Delfos Warehouse.
 
         Args:
             table_name (str): The name of the table to get the schema for.
         Returns:
             str: The schema of the specified table.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                f"SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
-                f"WHERE TABLE_NAME = '{table_name}'"
+                "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?",
+                (table_name,),
             )
             columns = cursor.fetchall()
             cursor.close()
@@ -122,16 +245,15 @@ class DelfosTools:
 
     def list_tables(self) -> str:
         """
-        List all tables in the Delfos database.
+        List all tables in the Delfos Warehouse.
 
         Returns:
             str: A list of all table names in the database.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_TYPE = 'BASE TABLE'"
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'"
             )
             tables = cursor.fetchall()
             cursor.close()
@@ -141,25 +263,32 @@ class DelfosTools:
 
     def get_database_info(self) -> str:
         """
-        Retrieve general information about the Delfos database.
+        Retrieve general information about the Delfos Warehouse.
+        Compatible with Fabric Warehouse (no SERVERPROPERTY).
 
         Returns:
             str: General information about the database.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT DB_NAME() AS DatabaseName, "
-                "SERVERPROPERTY('ProductVersion') AS Version"
-            )
+            cursor.execute("SELECT DB_NAME() AS DatabaseName")
             info = cursor.fetchone()
+
+            cursor.execute(
+                "SELECT COUNT(*) AS TableCount FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_TYPE = 'BASE TABLE'"
+            )
+            table_count = cursor.fetchone()
             cursor.close()
 
-        return f"Database Name: {info.DatabaseName}\nVersion: {info.Version}"
+        return (
+            f"Database Name: {info.DatabaseName}\n"
+            f"Total Tables: {table_count.TableCount}"
+        )
 
     def get_table_row_count(
         self,
-        table_name: Annotated[str, Field(description="The name of the table to count rows for.")]
+        table_name: Annotated[str, Field(description="The name of the table to count rows for.")],
     ) -> str:
         """
         Get the number of rows in a specified table.
@@ -169,9 +298,12 @@ class DelfosTools:
         Returns:
             str: The number of rows in the specified table.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT COUNT(*) AS TotalRows FROM [dbo].[{table_name}]")
+            table = self._validate_identifier(table_name)
+            cursor.execute(
+                f"SELECT COUNT(*) AS TotalRows FROM [{self._wh_schema}].[{table}]"
+            )
             row_count = cursor.fetchone()
             cursor.close()
 
@@ -179,24 +311,34 @@ class DelfosTools:
 
     def get_primary_keys(
         self,
-        table_name: Annotated[str, Field(description="The name of the table to get primary keys for.")]
+        table_name: Annotated[
+            str, Field(description="The name of the table to get primary keys for.")
+        ],
     ) -> str:
         """
         Retrieve the primary keys of a specified table.
+        Compatible with Fabric Warehouse (uses INFORMATION_SCHEMA).
 
         Args:
             table_name (str): The name of the table to get primary keys for.
         Returns:
             str: The primary keys of the specified table.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"""
-                SELECT COLUMN_NAME
-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-                WHERE OBJECTPROPERTY(OBJECT_ID(CONSTRAINT_SCHEMA + '.' + CONSTRAINT_NAME), 'IsPrimaryKey') = 1
-                AND TABLE_NAME = '{table_name}'
-            """)
+            cursor.execute(
+                """
+                SELECT kcu.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                    ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                    AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+                WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                    AND tc.TABLE_NAME = ?
+                ORDER BY kcu.ORDINAL_POSITION
+                """,
+                (table_name,),
+            )
             keys = cursor.fetchall()
             cursor.close()
 
@@ -209,7 +351,7 @@ class DelfosTools:
     def get_distinct_values(
         self,
         table_name: Annotated[str, Field(description="The name of the table.")],
-        column_name: Annotated[str, Field(description="The name of the column.")]
+        column_name: Annotated[str, Field(description="The name of the column.")],
     ) -> str:
         """
         Retrieve distinct values from a specified column in a table.
@@ -220,9 +362,13 @@ class DelfosTools:
         Returns:
             str: Distinct values from the specified column.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT DISTINCT [{column_name}] FROM [dbo].[{table_name}]")
+            table = self._validate_identifier(table_name)
+            column = self._validate_identifier(column_name)
+            cursor.execute(
+                f"SELECT DISTINCT [{column}] FROM [{self._wh_schema}].[{table}]"
+            )
             values = cursor.fetchall()
             cursor.close()
 
@@ -235,31 +381,28 @@ class DelfosTools:
     def get_table_relationships(self) -> str:
         """
         Retrieve foreign key relationships between tables.
+        Compatible with Fabric Warehouse (uses INFORMATION_SCHEMA).
 
         Returns:
             str: List of foreign key relationships in the database.
         """
-        with self._get_connection() as conn:
+        with self._get_wh_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
-                    fk.name AS ForeignKey,
-                    tp.name AS ParentTable,
-                    cp.name AS ParentColumn,
-                    tr.name AS ReferencedTable,
-                    cr.name AS ReferencedColumn
-                FROM
-                    sys.foreign_keys AS fk
-                INNER JOIN
-                    sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
-                INNER JOIN
-                    sys.tables AS tp ON fkc.parent_object_id = tp.object_id
-                INNER JOIN
-                    sys.columns AS cp ON fkc.parent_object_id = cp.object_id AND fkc.parent_column_id = cp.column_id
-                INNER JOIN
-                    sys.tables AS tr ON fkc.referenced_object_id = tr.object_id
-                INNER JOIN
-                    sys.columns AS cr ON fkc.referenced_object_id = cr.object_id AND fkc.referenced_column_id = cr.column_id
+                    rc.CONSTRAINT_NAME AS ForeignKey,
+                    kcu1.TABLE_NAME AS ParentTable,
+                    kcu1.COLUMN_NAME AS ParentColumn,
+                    kcu2.TABLE_NAME AS ReferencedTable,
+                    kcu2.COLUMN_NAME AS ReferencedColumn
+                FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu1
+                    ON rc.CONSTRAINT_NAME = kcu1.CONSTRAINT_NAME
+                    AND rc.CONSTRAINT_SCHEMA = kcu1.CONSTRAINT_SCHEMA
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu2
+                    ON rc.UNIQUE_CONSTRAINT_NAME = kcu2.CONSTRAINT_NAME
+                    AND rc.UNIQUE_CONSTRAINT_SCHEMA = kcu2.CONSTRAINT_SCHEMA
+                    AND kcu1.ORDINAL_POSITION = kcu2.ORDINAL_POSITION
             """)
             relationships = cursor.fetchall()
             cursor.close()
@@ -273,11 +416,15 @@ class DelfosTools:
         ]
         return "\n".join(rel_list)
 
+    # =========================================================================
+    # WRITE TOOLS — use DB connection
+    # =========================================================================
+
     def insert_agent_output_batch(
         self,
         user_id: str,
         question: str,
-        results: list[dict],
+        results: list[dict[str, Any]],
         metric_name: str,
         visual_hint: str,
     ) -> str:
@@ -290,54 +437,51 @@ class DelfosTools:
             results (List[Dict]): List of result rows, each with keys:
                 - x_value (str): X-axis value
                 - y_value (float): Y-axis numeric value
-                - series (str, optional): Series name for grouping (if not provided, category will be used)
+                - series (str, optional): Series name for grouping
                 - category (str, optional): Category name
             metric_name (str): Name of the metric being measured.
             visual_hint (str): Visualization type ('pie', 'bar', 'line', 'table').
 
         Returns:
             str: The run_id generated for this batch.
-
-        Example:
-            results = [
-                {"x_value": "United States", "y_value": 123456.78, "category": "United States"},
-                {"x_value": "Canada", "y_value": 45678.90, "category": "Canada"}
-            ]
         """
         run_id = str(uuid.uuid4())
         created_at = datetime.now()
 
-        query = """
-            INSERT INTO [dbo].[agent_output]
+        query = f"""
+            INSERT INTO [{self._db_schema}].[agent_output]
                 ([run_id], [user_id], [question], [x_value], [y_value],
                  [series], [category], [metric_name], [visual_hint], [created_at])
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
-        with self._get_connection() as conn:
+        with self._get_db_connection() as conn:
             cursor = conn.cursor()
             rows_inserted = 0
 
             for row in results:
                 series_value = row.get("series") or row.get("category")
-                cursor.execute(query, (
-                    run_id,
-                    user_id,
-                    question,
-                    row.get("x_value"),
-                    row.get("y_value"),
-                    series_value,
-                    row.get("category"),
-                    metric_name,
-                    visual_hint,
-                    created_at
-                ))
+                cursor.execute(
+                    query,
+                    (
+                        run_id,
+                        user_id,
+                        question,
+                        row.get("x_value"),
+                        row.get("y_value"),
+                        series_value,
+                        row.get("category"),
+                        metric_name,
+                        visual_hint,
+                        created_at,
+                    ),
+                )
                 rows_inserted += 1
 
             conn.commit()
             cursor.close()
 
-        logger.info(f"Inserted {rows_inserted} rows with run_id: {run_id}")
+        logger.info("Inserted %s rows with run_id: %s", rows_inserted, run_id)
         return run_id
 
     def generate_powerbi_url(self, run_id: str, visual_hint: str) -> str:
@@ -346,7 +490,7 @@ class DelfosTools:
 
         Args:
             run_id (str): The run identifier to filter the report.
-            visual_hint (str): The type of visualization ('linea', 'barras', 'barras_agrupadas', 'pie').
+            visual_hint (str): The type of visualization.
         Returns:
             str: The generated Power BI report URL.
         """
@@ -364,18 +508,13 @@ class DelfosTools:
 
         return url
 
-    def get_exploration_tools(self) -> list:
+    # =========================================================================
+    # AGENT TOOL LISTS
+    # =========================================================================
+
+    def get_exploration_tools(self) -> list[Any]:
         """
         Get exploration tools for SQL generation agents.
-
-        Returns the same tools that were filtered with:
-            exploration_tools = [
-                "list_tables",
-                "get_table_schema",
-                "get_table_relationships",
-                "get_distinct_values",
-                "get_primary_keys",
-            ]
 
         Returns:
             list: List of bound methods for agent tools parameter.
@@ -388,7 +527,7 @@ class DelfosTools:
             self.get_primary_keys,
         ]
 
-    def get_all_tools(self) -> list:
+    def get_all_tools(self) -> list[Any]:
         """
         Get all available agent tools.
 
@@ -406,12 +545,15 @@ class DelfosTools:
             self.execute_sql_query,
         ]
 
+    # =========================================================================
+    # SERVICE HELPERS (not agent tools)
+    # =========================================================================
+
     def execute_sql(self, sql: str) -> dict[str, Any]:
         """
         Execute SQL and return structured result for SQLExecutor service.
 
-        This method is not an agent tool. It returns a dict matching
-        the MCPClient.execute_sql() format for service compatibility.
+        Uses WH connection for data reads.
 
         Args:
             sql (str): The SQL query to execute.
@@ -420,9 +562,10 @@ class DelfosTools:
             dict: Result with keys: data, row_count, raw, error
         """
         try:
-            with self._get_connection() as conn:
+            adapted_sql = self._adapt_sql_for_wh(sql)
+            with self._get_wh_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(sql)
+                cursor.execute(adapted_sql)
                 results = cursor.fetchall()
                 cursor.close()
 
@@ -433,15 +576,14 @@ class DelfosTools:
             return {"data": rows, "row_count": len(rows), "raw": "\n".join(rows), "error": None}
 
         except pyodbc.Error as e:
-            logger.error(f"SQL execution error: {e}")
+            logger.error("SQL execution error: %s", e)
             return {"data": [], "row_count": 0, "raw": "", "error": str(e)}
 
     def get_schema(self, table_name: str) -> dict[str, Any]:
         """
         Get table schema as structured result for SchemaService.
 
-        This method is not an agent tool. It returns a dict matching
-        the MCPClient.get_table_schema() format for service compatibility.
+        Uses WH connection for schema reads.
 
         Args:
             table_name (str): The name of the table.
@@ -450,11 +592,12 @@ class DelfosTools:
             dict: Result with keys: name, columns (list of {name, type})
         """
         try:
-            with self._get_connection() as conn:
+            with self._get_wh_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    f"SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
-                    f"WHERE TABLE_NAME = '{table_name}' ORDER BY ORDINAL_POSITION"
+                    "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+                    (table_name,),
                 )
                 columns = cursor.fetchall()
                 cursor.close()
@@ -464,9 +607,9 @@ class DelfosTools:
 
             return {
                 "name": table_name,
-                "columns": [{"name": col.COLUMN_NAME, "type": col.DATA_TYPE} for col in columns]
+                "columns": [{"name": col.COLUMN_NAME, "type": col.DATA_TYPE} for col in columns],
             }
 
         except pyodbc.Error as e:
-            logger.error(f"Schema retrieval error: {e}")
+            logger.error("Schema retrieval error: %s", e)
             return {"name": table_name, "columns": [], "error": str(e)}

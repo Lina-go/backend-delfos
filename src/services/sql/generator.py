@@ -14,14 +14,13 @@ from src.infrastructure.database import DelfosTools
 from src.infrastructure.llm.executor import run_agent_with_format
 from src.infrastructure.llm.factory import (
     azure_agent_client,
-    create_anthropic_agent,
-    create_anthropic_foundry_agent,
+    create_claude_agent,
     get_shared_credential,
     is_anthropic_model,
 )
-from src.infrastructure.mcp.client import mcp_connection
 from src.services.sql.models import SQLResult
 from src.utils.json_parser import JSONParser
+from src.utils.tool_resolver import resolve_agent_tools
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,7 @@ class SQLGenerator:
     def __init__(self, settings: Settings):
         """Initialize SQL generator."""
         self.settings = settings
-        logger.info(f"SQLGenerator initialized with model: {settings.sql_agent_model}")
+        logger.info("SQLGenerator initialized with model: %s", settings.sql_agent_model)
 
     @staticmethod
     def _generate_cache_key(
@@ -45,7 +44,7 @@ class SQLGenerator:
         normalized_msg = message.lower().strip()
         tables = []
         if schema_context and schema_context.get("tables"):
-            tables = sorted(schema_context.get("tables", []))
+            tables = sorted(schema_context["tables"])
         cache_data = f"{normalized_msg}|{','.join(tables)}|{intent or ''}|{pattern_type or ''}"
         return hashlib.sha256(cache_data.encode()).hexdigest()
 
@@ -56,9 +55,9 @@ class SQLGenerator:
         intent: str | None = None,
         pattern_type: str | None = None,
         arquetipo: str | None = None,
+        temporality: str | None = None,
         previous_errors: list[str] | None = None,
         previous_sql: str | None = None,
-        mcp: Any | None = None,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
         """
@@ -69,10 +68,10 @@ class SQLGenerator:
             schema_context: Optional schema context with tables and schema info
             intent: Optional intent classification
             pattern_type: Optional pattern type
-            arquetipo: Optional archetype (A-N)
+            arquetipo: Optional archetype (A-K)
+            temporality: Optional temporality ("temporal" or "estatico")
             previous_errors: Optional list of validation errors from previous attempt
             previous_sql: Optional SQL query from previous attempt that failed
-            mcp: Optional MCP connection
             db_tools: Optional DelfosTools instance for direct DB access
 
         Returns:
@@ -80,27 +79,28 @@ class SQLGenerator:
         """
         try:
             # Only use cache for first attempt (no previous errors)
-            use_cache = not (previous_errors and len(previous_errors) > 0)
+            use_cache = not previous_errors
             cache_key = None
 
             if use_cache:
                 cache_key = self._generate_cache_key(message, schema_context, intent, pattern_type)
                 cached_result = SemanticCache.get(cache_key)
                 if cached_result is not None:
-                    logger.info(f"SQL cache hit for key: {cache_key[:8]}...")
+                    logger.info("SQL cache hit for key: %s...", cache_key[:8])
                     return cast(dict[str, Any], cached_result)
-                logger.debug(f"SQL cache miss for key: {cache_key[:8]}...")
+                logger.debug("SQL cache miss for key: %s...", cache_key[:8])
 
             prioritized_tables = None
             if schema_context and schema_context.get("tables"):
-                prioritized_tables = schema_context.get("tables", [])
+                prioritized_tables = schema_context["tables"]
 
             system_prompt = build_sql_generation_system_prompt(
-                prioritized_tables=prioritized_tables
+                prioritized_tables=prioritized_tables,
+                temporality=temporality,
             )
 
             # Build user input
-            if previous_errors and len(previous_errors) > 0 and previous_sql:
+            if previous_errors and previous_sql:
                 user_input = build_sql_retry_user_input(
                     original_question=message,
                     previous_sql=previous_sql,
@@ -112,134 +112,51 @@ class SQLGenerator:
 
             model = self.settings.sql_agent_model
             sql_max_tokens = self.settings.sql_max_tokens
-            logger.info(f"Using SQL agent model: {model}")
+            logger.info("Using SQL agent model: %s", model)
 
-            exploration_tools = [
-                "list_tables",
-                "get_table_schema",
-                "get_table_relationships",
-                "get_distinct_values",
-                "get_primary_keys",
-            ]
-
-            # Determine which tools to use
-            if db_tools is not None:
-                agent_tools = db_tools.get_exploration_tools()
-                logger.info("Using direct DB tools for SQL generation")
-            elif mcp is not None:
-                agent_tools = mcp
-                logger.info("Using provided MCP connection for SQL generation")
-            else:
-                agent_tools = None  # Will create MCP connection below
+            agent_tools = resolve_agent_tools(db_tools, context="sql_generation")
 
             if is_anthropic_model(model):
-                if self.settings.use_anthropic_api_for_claude:
-                    if not self.settings.anthropic_api_key:
-                        raise ValueError(
-                            "use_anthropic_api_for_claude is True but ANTHROPIC_API_KEY is not set"
-                        )
-                    logger.info(f"Using Anthropic API directly for Claude model: {model}")
-                    if agent_tools is not None:
-                        agent = create_anthropic_agent(
-                            settings=self.settings,
-                            name="SQLGenerator",
-                            instructions=system_prompt,
-                            tools=agent_tools,
-                            model=model,
-                            max_tokens=sql_max_tokens,
-                            response_format=SQLResult,
-                        )
-                        result_model = await run_agent_with_format(
-                            agent, user_input, response_format=SQLResult
-                        )
-                    else:
-                        async with mcp_connection(
-                            self.settings, allowed_tools=exploration_tools
-                        ) as mcp_tool:
-                            agent = create_anthropic_agent(
-                                settings=self.settings,
-                                name="SQLGenerator",
-                                instructions=system_prompt,
-                                tools=mcp_tool,
-                                model=model,
-                                max_tokens=sql_max_tokens,
-                                response_format=SQLResult,
-                            )
-                            result_model = await run_agent_with_format(
-                                agent, user_input, response_format=SQLResult
-                            )
-                else:
-                    logger.info(f"Using Anthropic on Foundry for Claude model: {model}")
-                    if agent_tools is not None:
-                        agent = create_anthropic_foundry_agent(
-                            settings=self.settings,
-                            name="SQLGenerator",
-                            instructions=system_prompt,
-                            tools=agent_tools,
-                            model=model,
-                            max_tokens=sql_max_tokens,
-                            response_format=SQLResult,
-                        )
-                        result_model = await run_agent_with_format(
-                            agent, user_input, response_format=SQLResult
-                        )
-                    else:
-                        async with mcp_connection(
-                            self.settings, allowed_tools=exploration_tools
-                        ) as mcp_tool:
-                            agent = create_anthropic_foundry_agent(
-                                settings=self.settings,
-                                name="SQLGenerator",
-                                instructions=system_prompt,
-                                tools=mcp_tool,
-                                model=model,
-                                max_tokens=sql_max_tokens,
-                                response_format=SQLResult,
-                            )
-                            result_model = await run_agent_with_format(
-                                agent, user_input, response_format=SQLResult
-                            )
+                logger.info("Using Claude agent for model: %s", model)
+                agent = create_claude_agent(
+                    settings=self.settings,
+                    name="SQLGenerator",
+                    instructions=system_prompt,
+                    tools=agent_tools or [],
+                    model=model,
+                    max_tokens=sql_max_tokens,
+                    response_format=SQLResult,
+                )
+                result_model = await run_agent_with_format(
+                    agent, user_input, response_format=SQLResult
+                )
             else:
-                credential = get_shared_credential()
+                credential = get_shared_credential(self.settings)
                 async with azure_agent_client(self.settings, model, credential) as client:
-                    if agent_tools is not None:
-                        agent = client.create_agent(
-                            name="SQLGenerator",
-                            instructions=system_prompt,
-                            tools=agent_tools,
-                            max_tokens=sql_max_tokens,
-                            temperature=self.settings.sql_temperature,
-                            response_format=SQLResult,
-                        )
-                        result_model = await run_agent_with_format(
-                            agent, user_input, response_format=SQLResult
-                        )
-                    else:
-                        async with mcp_connection(
-                            self.settings, allowed_tools=exploration_tools
-                        ) as mcp_tool:
-                            agent = client.create_agent(
-                                name="SQLGenerator",
-                                instructions=system_prompt,
-                                tools=mcp_tool,
-                                max_tokens=sql_max_tokens,
-                                temperature=self.settings.sql_temperature,
-                                response_format=SQLResult,
-                            )
-                            result_model = await run_agent_with_format(
-                                agent, user_input, response_format=SQLResult
-                            )
+                    agent = client.create_agent(
+                        name="SQLGenerator",
+                        instructions=system_prompt,
+                        tools=agent_tools or [],
+                        max_tokens=sql_max_tokens,
+                        temperature=self.settings.sql_temperature,
+                        response_format=SQLResult,
+                    )
+                    result_model = await run_agent_with_format(
+                        agent, user_input, response_format=SQLResult
+                    )
 
             if isinstance(result_model, SQLResult):
                 result_dict = result_model.model_dump()
             elif isinstance(result_model, str):
                 logger.warning(
-                    f"SQL agent returned string instead of SQLResult. Raw response (first 1000 chars): {result_model[:1000]}"
+                    "SQL agent returned string instead of SQLResult. Raw response (first 1000 chars): %s",
+                    result_model[:1000],
                 )
                 sql_json = JSONParser.extract_json(result_model)
                 if not sql_json:
                     logger.error(
-                        f"Could not extract JSON from SQL agent response. Full raw response: {result_model}"
+                        "Could not extract JSON from SQL agent response. Full raw response: %s",
+                        result_model,
                     )
                     return {
                         "pregunta_original": message,
@@ -250,7 +167,7 @@ class SQLGenerator:
                 sql_result = SQLResult(**sql_json)
                 result_dict = sql_result.model_dump()
             else:
-                logger.error(f"Unexpected response type from SQL agent: {type(result_model)}")
+                logger.error("Unexpected response type from SQL agent: %s", type(result_model))
                 return {
                     "pregunta_original": message,
                     "sql": "",
@@ -260,12 +177,12 @@ class SQLGenerator:
 
             if use_cache and cache_key:
                 SemanticCache.set(cache_key, result_dict)
-                logger.debug(f"Cached SQL result for key: {cache_key[:8]}...")
+                logger.debug("Cached SQL result for key: %s...", cache_key[:8])
 
             return result_dict
 
         except Exception as e:
-            logger.error(f"SQL generation error: {e}", exc_info=True)
+            logger.error("SQL generation error: %s", e, exc_info=True)
             return {
                 "pregunta_original": message,
                 "sql": "",

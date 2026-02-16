@@ -1,10 +1,12 @@
-"""
-Application settings using Pydantic BaseSettings.
-"""
+"""Application settings using Pydantic BaseSettings."""
 
+import logging
 from functools import lru_cache
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 class Settings(BaseSettings):
@@ -17,38 +19,73 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    ######################################
-    # Application information
-    ######################################
-
+    # Application
     app_name: str = "Delfos NL2SQL"
     app_version: str = "0.1.0"
     debug: bool = False
     log_level: str = "INFO"
 
-    ######################################
-    # Azure AI Foundry
-    ######################################
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        upper = v.upper()
+        if upper not in _VALID_LOG_LEVELS:
+            raise ValueError(f"log_level must be one of {_VALID_LOG_LEVELS}, got '{v}'")
+        return upper
 
+    @model_validator(mode="after")
+    def validate_timeouts_positive(self) -> "Settings":
+        for field_name in (
+            "response_timeout",
+            "triage_timeout",
+            "intent_timeout",
+            "sql_generation_timeout",
+            "sql_validation_timeout",
+            "sql_execution_timeout",
+            "verification_timeout",
+            "viz_timeout",
+            "format_timeout",
+        ):
+            value = getattr(self, field_name)
+            if value <= 0:
+                raise ValueError(f"{field_name} must be positive, got {value}")
+        return self
+
+    @model_validator(mode="after")
+    def warn_wildcard_origins(self) -> "Settings":
+        if self.allowed_origins == ["*"]:
+            logging.getLogger(__name__).warning(
+                "allowed_origins is set to ['*'] — consider restricting in production"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_fabric_config(self) -> "Settings":
+        if self.use_direct_db:
+            if not self.wh_server:
+                raise ValueError("wh_server is required when use_direct_db=True")
+            if not self.wh_database:
+                raise ValueError("wh_database is required when use_direct_db=True")
+            if not self.db_server:
+                raise ValueError("db_server is required when use_direct_db=True")
+            if not self.db_database:
+                raise ValueError("db_database is required when use_direct_db=True")
+        if self.use_service_principal:
+            if not all([self.azure_tenant_id, self.azure_client_id, self.azure_client_secret]):
+                raise ValueError(
+                    "azure_tenant_id, azure_client_id, and azure_client_secret "
+                    "are required when use_service_principal=True"
+                )
+        return self
+
+    # Azure AI Foundry
     azure_ai_project_endpoint: str = ""
 
-    ######################################
     # Anthropic
-    ######################################
-
     anthropic_api_key: str | None = None
-    # Use Anthropic API directly instead of Azure Foundry for Claude models
-    # Set to True to use Anthropic API, False to use Azure Foundry deployment
     use_anthropic_api_for_claude: bool = False
-    
-    # Anthropic Foundry configuration (for Claude models on Foundry)
-    # These are read by AsyncAnthropicFoundry from environment variables
     anthropic_foundry_api_key: str | None = None
     anthropic_foundry_resource: str | None = None
-
-    ######################################
-    # Agent model configurations
-    ######################################
 
     # Triage Agent
     triage_agent_model: str = "gpt-4.1"
@@ -63,14 +100,14 @@ class Settings(BaseSettings):
     # SQL Agent
     sql_agent_model: str = "claude-sonnet-4-5"
     sql_temperature: float = 0.0
-    sql_max_tokens: int = 4096
+    sql_max_tokens: int = 16384
 
     # SQL Executor Agent
     sql_executor_agent_model: str = "gpt-4o-mini"
     sql_executor_temperature: float = 0.0
     sql_executor_max_tokens: int = 4096
 
-    # Verification Agent (optional)
+    # Verification Agent
     verification_agent_model: str = "gpt-4o-mini"
     verification_temperature: float = 0.0
     verification_max_tokens: int = 1024
@@ -79,44 +116,23 @@ class Settings(BaseSettings):
     viz_agent_model: str = "gpt-4o-mini"
     viz_temperature: float = 0.0
     viz_max_tokens: int = 4096
+    viz_max_categories: int = 6
 
-    # Graph Agent
-    graph_agent_model: str = "gpt-4o-mini"
-    graph_temperature: float = 0.0
-    graph_max_tokens: int = 4096
-
-    # Format Agent (optional)
+    # Format Agent
     format_agent_model: str = "gpt-4o-mini"
     format_temperature: float = 0.0
     format_max_tokens: int = 1024
 
-    ######################################
-    # MCP Server
-    ######################################
+    # CORS
+    allowed_origins: list[str] = ["*"]
 
-    mcp_server_url: str = "https://func-mcp-n2z2m7tmh3kvk.azurewebsites.net/mcp"
-    mcp_timeout: int = 60
-    mcp_sse_timeout: int = 30
-
-    ######################################
-    # Azure Blob Storage
-    ######################################
-
-    azure_storage_account_url: str = "https://delfoscharts.blob.core.windows.net"
-    azure_storage_container_name: str = "charts"
-    azure_storage_connection_string: str = ""
-
-    ######################################
-    # Pipeline configuration
-    ######################################
-
-    # Pipeline settings
+    # Pipeline
     pipeline_name: str = "nl2sql"
     pipeline_version: str = "0.1.0"
     pipeline_description: str = "NL2SQL pipeline"
-
     use_llm_verification: bool = False
     use_llm_formatting: bool = False
+    max_history_turns: int = 10
 
     # SQL retries
     sql_max_retries: int = 2
@@ -124,17 +140,13 @@ class Settings(BaseSettings):
     sql_retry_delay: int = 1
     retry_backoff_factor: float = 2.0
 
-    # Schema cache settings
+    # Schema cache
     schema_cache_max_size: int = 100
     schema_cache_ttl: int = 3600
 
-    # Global response timeout
+    # Timeouts
     response_timeout: int = 120
-
-    # LLM concurrency limit
     llm_max_concurrent_requests: int = 2
-
-    # Steps timeout
     triage_timeout: float = 5.0
     intent_timeout: float = 5.0
     sql_generation_timeout: float = 120.0
@@ -142,45 +154,29 @@ class Settings(BaseSettings):
     sql_execution_timeout: float = 50.0
     verification_timeout: float = 10.0
     viz_timeout: float = 15.0
-    graph_timeout: float = 15.0
     format_timeout: float = 10.0
 
-    ######################################
-    # Chart server configuration
-    ######################################
-    chart_default_width: int = 800
-    chart_default_height: int = 600
-    chart_output_format: str = "html"  # html|png
-    chart_color_palette: list[str] = [
-        "#0057A4",  # Dark Blue
-        "#4A90E2",  # Light Blue
-        "#003A70",  # Navy Blue
-        "#E61E25",  # Red
-        "#A11218",  # Dark Red
-        "#E5E8EC",  # Light Gray
-        "#4A4F55",  # Dark Gray
-        "#4CAF50",  # Green
-    ]
-    chart_font_family: str = "Arial, sans-serif"
-    chart_font_size: int = 12
-
-    ######################################
-    # PowerBi configuration
-    ######################################
+    # Power BI
     powerbi_workspace_id: str | None = None
     powerbi_report_id: str | None = None
 
-    ######################################
-    # Database configuration
-    ######################################
-    database_name: str = "SuperDB"
-    database_schema: str = "dbo"
-    database_connection_string: str = ""
+    # Warehouse (READS - agent data queries)
+    wh_server: str = ""
+    wh_database: str = ""
+    wh_schema: str = "gold"
 
-    ######################################
-    # Direct database access (bypass MCP)
-    ######################################
+    # SQL Database (WRITES - app CRUD, agent_output)
+    db_server: str = ""
+    db_database: str = ""
+    db_schema: str = "dbo"
+
     use_direct_db: bool = False
+
+    # Authentication (Service Principal)
+    use_service_principal: bool = False
+    azure_tenant_id: str = ""
+    azure_client_id: str = ""
+    azure_client_secret: str = ""
 
 
 @lru_cache

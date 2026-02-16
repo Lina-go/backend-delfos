@@ -1,13 +1,17 @@
-"""Database connection utilities with connection pooling."""
+"""Database connection utilities with connection pooling for Microsoft Fabric."""
 
 import asyncio
 import logging
+import struct
 import threading
-from contextlib import contextmanager
+import time
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
 from queue import Empty, Queue
-from typing import Any, Generator, cast
+from typing import Any, cast
 
 import pyodbc
+from azure.identity import DefaultAzureCredential
 
 from src.config.settings import Settings
 from src.utils.retry import is_pyodbc_timeout_error, run_with_retry
@@ -15,9 +19,66 @@ from src.utils.retry import is_pyodbc_timeout_error, run_with_retry
 logger = logging.getLogger(__name__)
 
 
+class FabricConnectionFactory:
+    """
+    Factory for Microsoft Fabric connections via Managed Identity.
+
+    Handles token acquisition and automatic refresh (tokens expire ~1 hour).
+    Thread-safe.
+    """
+
+    TOKEN_SCOPE = "https://database.windows.net/.default"
+    TOKEN_REFRESH_MARGIN = 300  # refresh 5 minutes before expiry
+
+    def __init__(
+        self,
+        server: str,
+        database: str,
+        connection_timeout: int = 30,
+        credential: DefaultAzureCredential | None = None,
+    ):
+        self._server = server
+        self._database = database
+        self._timeout = connection_timeout
+        self._credential = credential or DefaultAzureCredential()
+        self._token: str | None = None
+        self._token_expiry: float = 0
+        self._token_lock = threading.Lock()
+
+    def _get_token_struct(self) -> bytes:
+        """Get a valid token struct, refreshing if needed."""
+        with self._token_lock:
+            now = time.time()
+            if self._token is None or now >= (self._token_expiry - self.TOKEN_REFRESH_MARGIN):
+                access_token = self._credential.get_token(self.TOKEN_SCOPE)
+                self._token = access_token.token
+                self._token_expiry = access_token.expires_on
+                logger.debug("Fabric token refreshed for %s, expires at %s", self._database, self._token_expiry)
+
+            token_bytes = self._token.encode("UTF-16-LE")
+            return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+
+    def create_connection(self) -> pyodbc.Connection:
+        """Create a new Fabric connection with current token."""
+        logger.info("Creating Fabric connection to %s/%s", self._server, self._database)
+        token_struct = self._get_token_struct()
+        conn_str = (
+            "Driver={ODBC Driver 18 for SQL Server};"
+            f"Server={self._server};"
+            f"Database={self._database};"
+            "Encrypt=yes;"
+            "TrustServerCertificate=no;"
+        )
+        conn = pyodbc.connect(conn_str, timeout=self._timeout, attrs_before={1256: token_struct})
+        logger.debug("Connected to %s/%s", self._server, self._database)
+        return conn
+
+
 class ConnectionPool:
     """
     Thread-safe connection pool for pyodbc connections.
+
+    Supports dual pools: one for Warehouse (reads) and one for DB (writes).
 
     Features:
     - Configurable pool size (min/max connections)
@@ -26,20 +87,19 @@ class ConnectionPool:
     - Thread-safe operation
     """
 
-    _instance: "ConnectionPool | None" = None
+    _wh_instance: "ConnectionPool | None" = None
+    _db_instance: "ConnectionPool | None" = None
     _lock = threading.Lock()
 
     def __init__(
         self,
-        connection_string: str,
+        factory: FabricConnectionFactory,
         min_size: int = 2,
         max_size: int = 10,
-        connection_timeout: int = 30,
     ):
-        self._connection_string = connection_string
+        self._factory = factory
         self._min_size = min_size
         self._max_size = max_size
-        self._connection_timeout = connection_timeout
 
         self._pool: Queue[pyodbc.Connection] = Queue(maxsize=max_size)
         self._size = 0
@@ -56,21 +116,18 @@ class ConnectionPool:
                 conn = self._create_connection()
                 self._pool.put(conn)
             except Exception as e:
-                logger.warning(f"Failed to pre-create connection: {e}")
+                logger.warning("Failed to pre-create connection: %s", e)
 
     def _create_connection(self) -> pyodbc.Connection:
-        """Create a new database connection."""
+        """Create a new database connection via factory."""
         with self._size_lock:
             if self._size >= self._max_size:
                 raise RuntimeError(f"Connection pool exhausted (max={self._max_size})")
             self._size += 1
 
         try:
-            conn = pyodbc.connect(
-                self._connection_string,
-                timeout=self._connection_timeout,
-            )
-            logger.debug(f"Created new connection (pool size: {self._size})")
+            conn = self._factory.create_connection()
+            logger.debug("Created new connection (pool size: %s)", self._size)
             return conn
         except Exception:
             with self._size_lock:
@@ -85,7 +142,7 @@ class ConnectionPool:
             cursor.fetchone()
             cursor.close()
             return True
-        except Exception:
+        except pyodbc.Error:
             return False
 
     def get_connection(self, timeout: float = 5.0) -> pyodbc.Connection:
@@ -127,17 +184,26 @@ class ConnectionPool:
             # Reset connection state
             conn.rollback()
             self._pool.put_nowait(conn)
-        except Exception:
+        except (pyodbc.Error, Exception):
             self._close_connection(conn)
 
     def _close_connection(self, conn: pyodbc.Connection) -> None:
         """Close a connection and update pool size."""
-        try:
+        with suppress(Exception):
             conn.close()
-        except Exception:
-            pass
         with self._size_lock:
             self._size = max(0, self._size - 1)
+
+    @property
+    def stats(self) -> dict[str, int]:
+        """Return pool statistics."""
+        available = self._pool.qsize()
+        return {
+            "total_connections": self._size,
+            "available": available,
+            "in_use": self._size - available,
+            "max_size": self._max_size,
+        }
 
     def close_all(self) -> None:
         """Close all connections in the pool."""
@@ -148,7 +214,7 @@ class ConnectionPool:
                 self._close_connection(conn)
             except Empty:
                 break
-        logger.info("Connection pool closed")
+        logger.debug("Connection pool closed")
 
     @contextmanager
     def connection(self) -> Generator[pyodbc.Connection, None, None]:
@@ -160,27 +226,39 @@ class ConnectionPool:
             self.return_connection(conn)
 
     @classmethod
-    def get_pool(cls, settings: Settings) -> "ConnectionPool":
-        """Get or create the singleton connection pool."""
-        if cls._instance is None:
+    def get_db_pool(cls, settings: Settings) -> "ConnectionPool":
+        """Get or create the DB (writes) connection pool."""
+        if cls._db_instance is None:
             with cls._lock:
-                if cls._instance is None:
-                    if not settings.database_connection_string:
-                        raise ValueError("database_connection_string is not configured")
-                    cls._instance = ConnectionPool(
-                        connection_string=settings.database_connection_string,
-                        min_size=2,
-                        max_size=10,
-                    )
-        return cls._instance
+                if cls._db_instance is None:
+                    if not settings.db_server or not settings.db_database:
+                        raise ValueError("db_server and db_database are required")
+                    factory = FabricConnectionFactory(settings.db_server, settings.db_database)
+                    cls._db_instance = ConnectionPool(factory, min_size=0, max_size=10)
+        return cls._db_instance
 
     @classmethod
-    def close_pool(cls) -> None:
-        """Close the singleton pool if it exists."""
+    def get_wh_pool(cls, settings: Settings) -> "ConnectionPool":
+        """Get or create the WH (reads) connection pool."""
+        if cls._wh_instance is None:
+            with cls._lock:
+                if cls._wh_instance is None:
+                    if not settings.wh_server or not settings.wh_database:
+                        raise ValueError("wh_server and wh_database are required")
+                    factory = FabricConnectionFactory(settings.wh_server, settings.wh_database)
+                    cls._wh_instance = ConnectionPool(factory, min_size=0, max_size=10)
+        return cls._wh_instance
+
+    @classmethod
+    def close_all_pools(cls) -> None:
+        """Close all singleton pools."""
         with cls._lock:
-            if cls._instance is not None:
-                cls._instance.close_all()
-                cls._instance = None
+            if cls._db_instance is not None:
+                cls._db_instance.close_all()
+                cls._db_instance = None
+            if cls._wh_instance is not None:
+                cls._wh_instance.close_all()
+                cls._wh_instance = None
 
 
 async def execute_query(
@@ -189,18 +267,17 @@ async def execute_query(
     """
     Execute a SELECT query and return results as a list of dictionaries.
 
+    Uses the DB pool (SuperDB) for application CRUD operations.
+
     Args:
-        settings: Application settings containing database_connection_string
+        settings: Application settings
         sql: SQL query string (use ? placeholders for parameters)
         params: Optional tuple of parameters for parameterized queries
 
     Returns:
         List of dictionaries, where each dictionary represents a row
-
-    Raises:
-        Exception: If database connection or query execution fails
     """
-    pool = ConnectionPool.get_pool(settings)
+    pool = ConnectionPool.get_db_pool(settings)
 
     def _execute() -> list[dict[str, Any]]:
         """Execute query synchronously using connection pool."""
@@ -215,10 +292,7 @@ async def execute_query(
                 columns = [column[0] for column in cursor.description]
                 rows = cursor.fetchall()
 
-                return [
-                    {col_name: row[i] for i, col_name in enumerate(columns)}
-                    for row in rows
-                ]
+                return [{col_name: row[i] for i, col_name in enumerate(columns)} for row in rows]
             finally:
                 cursor.close()
 
@@ -243,15 +317,17 @@ async def execute_insert(
     """
     Execute an INSERT, UPDATE, or DELETE query.
 
+    Uses the DB pool (SuperDB) for application CRUD operations.
+
     Args:
-        settings: Application settings containing database_connection_string
+        settings: Application settings
         sql: SQL query string (use ? placeholders for parameters)
         params: Optional tuple of parameters for parameterized queries
 
     Returns:
         Dictionary with success status and affected row count
     """
-    pool = ConnectionPool.get_pool(settings)
+    pool = ConnectionPool.get_db_pool(settings)
 
     def _execute() -> dict[str, Any]:
         """Execute insert/update/delete synchronously using connection pool."""
@@ -272,7 +348,7 @@ async def execute_insert(
                     "error": None,
                 }
             except Exception as e:
-                logger.error(f"Database insert/update error: {e}")
+                logger.error("Database insert/update error: %s", e)
                 conn.rollback()
                 if is_pyodbc_timeout_error(e):
                     raise

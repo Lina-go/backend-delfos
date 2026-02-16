@@ -1,10 +1,11 @@
 """Structured JSON logging for production."""
 
+import contextvars
 import json
 import logging
 import sys
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -25,7 +26,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_data: dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -62,10 +63,10 @@ class ConsoleFormatter(logging.Formatter):
     """Human-readable console formatter for development."""
 
     COLORS = {
-        "DEBUG": "\033[36m",     # Cyan
-        "INFO": "\033[32m",      # Green
-        "WARNING": "\033[33m",   # Yellow
-        "ERROR": "\033[31m",     # Red
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
         "CRITICAL": "\033[35m",  # Magenta
     }
     RESET = "\033[0m"
@@ -142,29 +143,35 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
+_log_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
+    "log_context",
+)
+
+
 class LogContext:
-    """
-    Context manager for adding context to log messages.
+    """Context manager for adding context to log messages.
+
+    Thread-safe and async-safe using contextvars.
 
     Usage:
         with LogContext(request_id="abc123", user_id="user1"):
-            logger.info("Processing request")  # Will include request_id and user_id
+            logger.info("Processing request")
     """
-
-    _context: dict[str, Any] = {}
 
     def __init__(self, **kwargs: Any):
         self.new_context = kwargs
-        self.old_context: dict[str, Any] = {}
+        self._token: contextvars.Token[dict[str, Any]] | None = None
 
     def __enter__(self) -> "LogContext":
-        self.old_context = LogContext._context.copy()
-        LogContext._context.update(self.new_context)
+        current = _log_context.get({}).copy()
+        current.update(self.new_context)
+        self._token = _log_context.set(current)
         return self
 
     def __exit__(self, *args: Any) -> None:
-        LogContext._context = self.old_context
+        if self._token is not None:
+            _log_context.reset(self._token)
 
     @classmethod
     def get_context(cls) -> dict[str, Any]:
-        return cls._context.copy()
+        return _log_context.get({}).copy()

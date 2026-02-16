@@ -87,7 +87,7 @@ class MCPClient:
         return self
 
     async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> bool:
-        """Exit context manager - close connection."""  
+        """Exit context manager - close connection."""
         await self.close()
         return False
 
@@ -120,7 +120,7 @@ class MCPClient:
     async def connect(self) -> None:
         """Establish MCP connection."""
         if self._mcp is None and self.settings is not None:
-            logger.debug(f"Connecting to MCP server at {self.settings.mcp_server_url}")
+            logger.debug("Connecting to MCP server at %s", self.settings.mcp_server_url)
             self._mcp = MCPStreamableHTTPTool(
                 name="delfos-mcp",
                 url=self.settings.mcp_server_url,
@@ -152,6 +152,23 @@ class MCPClient:
                 text_parts.append(content.text)
         return "\n".join(text_parts)
 
+    async def _call_tool(self, tool_name: str, **kwargs: Any) -> str:
+        """Execute MCP tool with standard connection check and error handling."""
+        await self._ensure_connected()
+        if self._mcp is None:
+            raise RuntimeError("MCP connection is not established")
+        try:
+            result = await self._mcp.call_tool(tool_name, **kwargs)
+            return self._extract_text_content(result)
+        except ToolExecutionException:
+            logger.error("Failed to execute %s via MCP", tool_name)
+            raise
+        except Exception as e:
+            logger.error("Unexpected error executing %s: %s", tool_name, e, exc_info=True)
+            raise ToolExecutionException(
+                f"Failed to execute {tool_name}: {e}", inner_exception=e
+            ) from e
+
     async def list_tables(self) -> list[str]:
         """List all tables in the database.
 
@@ -161,33 +178,14 @@ class MCPClient:
         Raises:
             ToolExecutionException: If the MCP tool call fails
         """
-        await self._ensure_connected()
-        if self._mcp is None:
-            raise RuntimeError("MCP connection is not established")
+        text = await self._call_tool("list_tables")
 
-        try:
-            # Call the list_tables MCP tool (returns newline-separated table names)
-            result = await self._mcp.call_tool("list_tables")
-            text = self._extract_text_content(result)
+        if not text or "No tables found" in text:
+            return []
 
-            # Server returns: "table1\ntable2\ntable3" or "No tables found in the database."
-            if not text or "No tables found" in text:
-                return []
-
-            # Split by newline and filter empty strings
-            tables = [table.strip() for table in text.split("\n") if table.strip()]
-
-            logger.debug(f"Retrieved {len(tables)} tables from MCP")
-            return tables
-
-        except ToolExecutionException as e:
-            logger.error(f"Failed to list tables via MCP: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error listing tables: {e}", exc_info=True)
-            raise ToolExecutionException(
-                f"Failed to list tables: {str(e)}", inner_exception=e
-            ) from e
+        tables = [table.strip() for table in text.split("\n") if table.strip()]
+        logger.debug("Retrieved %s tables from MCP", len(tables))
+        return tables
 
     async def get_table_schema(self, table_name: str) -> dict[str, Any]:
         """Get schema for a specific table.
@@ -196,57 +194,32 @@ class MCPClient:
             table_name: Name of the table to get schema for
 
         Returns:
-            Dictionary containing table schema information:
-            {
-                "name": table_name,
-                "columns": [{"name": "col1", "type": "VARCHAR"}, ...]
-            }
+            Dictionary containing table schema information
 
         Raises:
             ToolExecutionException: If the MCP tool call fails
         """
-        await self._ensure_connected()
-        if self._mcp is None:
-            raise RuntimeError("MCP connection is not established")
-
         if not table_name:
             raise ValueError("table_name is required")
 
-        try:
-            # Call the get_table_schema MCP tool
-            # Server returns: "COLUMN_NAME: DATA_TYPE\nCOLUMN_NAME: DATA_TYPE" or error message
-            result = await self._mcp.call_tool("get_table_schema", table_name=table_name)
-            text = self._extract_text_content(result)
+        text = await self._call_tool("get_table_schema", table_name=table_name)
 
-            # Check for error message
-            if "No schema found" in text:
-                logger.warning(f"No schema found for table: {table_name}")
-                return {"name": table_name, "columns": []}
+        if "No schema found" in text:
+            logger.warning("No schema found for table: %s", table_name)
+            return {"name": table_name, "columns": []}
 
-            # Parse schema: "COLUMN_NAME: DATA_TYPE\nCOLUMN_NAME: DATA_TYPE"
-            columns = []
-            for line in text.split("\n"):
-                line = line.strip()
-                if line and ":" in line:
-                    parts = line.split(":", 1)
-                    if len(parts) == 2:
-                        col_name = parts[0].strip()
-                        col_type = parts[1].strip()
-                        columns.append({"name": col_name, "type": col_type})
+        columns = []
+        for line in text.split("\n"):
+            line = line.strip()
+            if line and ":" in line:
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    col_name = parts[0].strip()
+                    col_type = parts[1].strip()
+                    columns.append({"name": col_name, "type": col_type})
 
-            schema_data = {"name": table_name, "columns": columns}
-
-            logger.debug(f"Retrieved schema for table: {table_name} ({len(columns)} columns)")
-            return schema_data
-
-        except ToolExecutionException as e:
-            logger.error(f"Failed to get table schema for {table_name} via MCP: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error getting table schema: {e}", exc_info=True)
-            raise ToolExecutionException(
-                f"Failed to get table schema: {str(e)}", inner_exception=e
-            ) from e
+        logger.debug("Retrieved schema for table: %s (%s columns)", table_name, len(columns))
+        return {"name": table_name, "columns": columns}
 
     async def execute_sql(self, sql: str) -> dict[str, Any]:
         """Execute SQL query via MCP.
@@ -255,52 +228,27 @@ class MCPClient:
             sql: SQL query string to execute
 
         Returns:
-            Dictionary containing query results:
-            {
-                "data": [list of result rows as strings],
-                "row_count": number of rows,
-                "raw": "raw result text",
-                "error": None or error message string
-            }
+            Dictionary containing query results
 
         Note:
             For critical errors (connection issues, invalid tool calls),
             exceptions are still raised. The "error" field is for SQL execution errors.
         """
-        await self._ensure_connected()
-        if self._mcp is None:
-            raise RuntimeError("MCP connection is not established")
-
         if not sql or not sql.strip():
             raise ValueError("SQL query cannot be empty")
 
         try:
-            # Call the execute_sql_query MCP tool (note: server uses execute_sql_query, not execute_sql)
-            # Server returns: "row1\nrow2\nrow3" or "No results found."
-            result = await self._mcp.call_tool("execute_sql_query", query=sql)
-            text = self._extract_text_content(result)
-
-            # Server returns newline-separated rows
-            if not text or "No results found" in text:
-                return {"data": [], "row_count": 0, "raw": text, "error": None}
-
-            # Split by newline to get individual rows
-            rows = [row.strip() for row in text.split("\n") if row.strip()]
-
-            logger.debug(f"SQL executed via MCP: {len(rows)} rows")
-            return {"data": rows, "row_count": len(rows), "raw": text, "error": None}
-
+            text = await self._call_tool("execute_sql_query", query=sql)
         except ToolExecutionException as e:
-            logger.error(f"Failed to execute SQL via MCP: {e}")
-            # For ToolExecutionException, return error in dict (SQL execution error)
             return {"data": [], "row_count": 0, "raw": "", "error": str(e)}
-        except Exception as e:
-            logger.error(f"Unexpected error executing SQL: {e}", exc_info=True)
-            # For unexpected errors, still raise exception (connection issues, etc.)
-            raise ToolExecutionException(
-                f"Failed to execute SQL: {str(e)}", inner_exception=e
-            ) from e
-    
+
+        if not text or "No results found" in text:
+            return {"data": [], "row_count": 0, "raw": text, "error": None}
+
+        rows = [row.strip() for row in text.split("\n") if row.strip()]
+        logger.debug("SQL executed via MCP: %s rows", len(rows))
+        return {"data": rows, "row_count": len(rows), "raw": text, "error": None}
+
     async def insert_agent_output_batch(
         self,
         user_id: str,
@@ -309,19 +257,14 @@ class MCPClient:
         metric_name: str,
         visual_hint: str,
     ) -> str:
-        """
-        Insert visualization data into agent_output table.
-        
+        """Insert visualization data into agent_output table.
+
         Returns:
             str: The run_id generated for this batch
         """
-        await self._ensure_connected()
-        if self._mcp is None:
-            raise RuntimeError("MCP connection is not established")
+        logger.debug("Inserting %s data points for user %s", len(results), user_id)
 
-        logger.debug(f"Inserting {len(results)} data points for user {user_id}")
-        
-        result = await self._mcp.call_tool(
+        run_id = await self._call_tool(
             "insert_agent_output_batch",
             user_id=user_id,
             question=question,
@@ -329,37 +272,27 @@ class MCPClient:
             metric_name=metric_name,
             visual_hint=visual_hint,
         )
-        
-        run_id = self._extract_text_content(result)
-        logger.info(f"Successfully inserted batch with run_id: {run_id}")
+        logger.info("Successfully inserted batch with run_id: %s", run_id)
         return run_id
-
 
     async def generate_powerbi_url(
         self,
         run_id: str,
         visual_hint: str,
     ) -> str:
-        """
-        Generate Power BI URL for visualization.
-        
+        """Generate Power BI URL for visualization.
+
         Returns:
             str: Complete Power BI URL
         """
-        await self._ensure_connected()
-        if self._mcp is None:
-            raise RuntimeError("MCP connection is not established")
+        logger.debug("Generating Power BI URL for run_id: %s", run_id)
 
-        logger.debug(f"Generating Power BI URL for run_id: {run_id}")
-        
-        result = await self._mcp.call_tool(
+        powerbi_url = await self._call_tool(
             "generate_powerbi_url",
             run_id=run_id,
             visual_hint=visual_hint,
         )
-        
-        powerbi_url = self._extract_text_content(result)
-        logger.info(f"Generated Power BI URL for run_id {run_id}")
+        logger.info("Generated Power BI URL for run_id %s", run_id)
         return powerbi_url
 
     async def close(self) -> None:
@@ -372,8 +305,8 @@ class MCPClient:
                 # Suppress cancel scope errors - they occur when context is already closed
                 error_msg = str(e)
                 if "cancel scope" not in error_msg.lower():
-                    logger.warning(f"Error closing MCP connection: {e}")
+                    logger.warning("Error closing MCP connection: %s", e)
                 else:
-                    logger.debug(f"MCP connection already closed (cancel scope): {e}")
+                    logger.debug("MCP connection already closed (cancel scope): %s", e)
             finally:
                 self._mcp = None

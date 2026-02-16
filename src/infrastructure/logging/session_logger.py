@@ -71,6 +71,11 @@ Los archivos de respuesta de cada agente están en este directorio.
 
         return str(self.session_dir)
 
+    @staticmethod
+    def _md_section(title: str, content: str, lang: str = "") -> list[str]:
+        """Build a markdown section with a fenced code block."""
+        return [f"## {title}", "", f"```{lang}", content, "```", ""]
+
     def log_agent_response(
         self,
         agent_name: str,
@@ -114,51 +119,19 @@ Los archivos de respuesta de cada agente están en este directorio.
         content_parts.extend(["", "---", ""])
 
         if system_prompt:
-            content_parts.extend(
-                [
-                    "## System Prompt",
-                    "",
-                    "```",
-                    system_prompt,
-                    "```",
-                    "",
-                ]
-            )
+            content_parts.extend(self._md_section("System Prompt", system_prompt))
 
         if input_text:
-            content_parts.extend(
-                [
-                    "## Input",
-                    "",
-                    "```",
-                    input_text,
-                    "```",
-                    "",
-                ]
-            )
+            content_parts.extend(self._md_section("Input", input_text))
 
-        content_parts.extend(
-            [
-                "## Respuesta Raw",
-                "",
-                "```",
-                raw_response,
-                "```",
-                "",
-            ]
-        )
+        content_parts.extend(self._md_section("Respuesta Raw", raw_response))
 
-        if parsed_response:
-            content_parts.extend(
-                [
-                    "## Respuesta Parseada (JSON)",
-                    "",
-                    "```json",
-                    json.dumps(parsed_response, indent=2, ensure_ascii=False),
-                    "```",
-                    "",
-                ]
-            )
+        if parsed_response and not raw_response:
+            content_parts.extend(self._md_section(
+                "Respuesta Parseada (JSON)",
+                json.dumps(parsed_response, indent=2, ensure_ascii=False),
+                lang="json",
+            ))
 
         content = "\n".join(content_parts)
         filepath.write_text(content, encoding="utf-8")
