@@ -28,8 +28,7 @@ def test_intent_result_includes_titulo_grafica():
     result = IntentResult(
         user_question="Cuál es el saldo total por banco?",
         intent=Intent.REQUIERE_VIZ,
-        tipo_patron="Comparación",
-        arquetipo="A",
+        sub_type="comparacion_directa",
         razon="Compara saldos entre bancos",
         titulo_grafica="Saldo total por entidad bancaria",
     )
@@ -42,7 +41,6 @@ def test_intent_result_titulo_grafica_defaults_to_none():
     result = IntentResult(
         user_question="Cuál es el total?",
         intent=Intent.NIVEL_PUNTUAL,
-        tipo_patron="Comparación",
-        arquetipo="A",
+        sub_type="valor_puntual",
     )
     assert result.titulo_grafica is None

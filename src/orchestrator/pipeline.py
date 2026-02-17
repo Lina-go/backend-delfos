@@ -2,22 +2,24 @@
 
 import json
 import logging
-import unicodedata
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from src.api.response import build_response
-from src.config.archetypes import (
-    Temporality,
-    get_archetype_letter_by_name,
-    get_archetype_name,
-    get_chart_type_for_archetype,
+from src.config.archetypes import get_archetype_name
+from src.config.subtypes import (
+    SubType,
+    get_chart_type_for_subtype,
+    get_legacy_archetype,
+    get_pattern_type,
+    get_subtype_from_string,
+    get_temporality,
+    is_blocked,
 )
 from src.config.constants import ChartType, PatternType, PipelineStep, QueryType
 from src.config.message import get_rejection_message
 from src.config.prompts import (
     build_format_prompt,
-    build_intent_system_prompt,
     build_triage_system_prompt,
     build_viz_mapping_prompt,
 )
@@ -229,53 +231,6 @@ class PipelineOrchestrator:
 
         return triage_result
 
-    # Keywords that justify a "temporal" classification on their own merit.
-    # Used by _guard_temporality to prevent incorrect temporal inheritance.
-    _TEMPORAL_KEYWORDS = frozenset({
-        "evolucion", "evolución", "evolucionado",
-        "tendencia", "histórico", "historico",
-        "últimos meses", "ultimos meses",
-        "mes a mes",
-        "durante los últimos", "durante los ultimos",
-        "últimos años", "ultimos años",
-        "los últimos", "los ultimos",
-        "trimestres", "semestres",
-    })
-
-    @staticmethod
-    def _guard_temporality(intent_result: dict, original_message: str) -> None:
-        """Override temporal→estatico if no temporal keywords in the original message.
-
-        Prevents incorrect temporal inheritance from conversation context.
-        Only allows temporal when:
-        - The message has explicit temporal keywords, OR
-        - The message is a short fragment (likely a genuine follow-up reference)
-        """
-        if intent_result.get("temporality") != "temporal":
-            return
-
-        msg_lower = original_message.lower()
-        has_temporal_keyword = any(
-            kw in msg_lower for kw in PipelineOrchestrator._TEMPORAL_KEYWORDS
-        )
-
-        if has_temporal_keyword:
-            return  # Temporal is justified by the message itself
-
-        # Check if it's a short fragment (potential genuine follow-up)
-        stripped = original_message.strip()
-        is_full_question = stripped.startswith("¿") or len(stripped.split()) > 12
-
-        if not is_full_question:
-            return  # Short fragment — allow temporal inheritance
-
-        # Full question with no temporal keywords — override to estático
-        logger.info(
-            "Guard: overriding temporal→estatico (no temporal keywords in: '%s')",
-            original_message[:80],
-        )
-        intent_result["temporality"] = "estatico"
-
     async def _step_intent(
         self,
         state: PipelineState,
@@ -292,32 +247,36 @@ class PipelineOrchestrator:
                 f"## Pregunta actual\n{message}"
             )
 
-        intent_prompt = build_intent_system_prompt()
         async with timed_step(
             PipelineStep.INTENT, self.session_logger, "IntentClassifier",
-            input_text=intent_message, system_prompt=intent_prompt,
+            input_text=intent_message,
         ) as ctx:
             intent_result = await self.intent.classify(intent_message)
 
             state.intent = intent_result["intent"]
-            raw_pattern = intent_result.get("tipo_patron", "")
-            state.pattern_type = (
-                unicodedata.normalize("NFKD", raw_pattern).encode("ascii", "ignore").decode().lower()
-            )
-            archetype_letter = str(intent_result.get("arquetipo", "K"))
-            state.arquetipo = get_archetype_name(archetype_letter)
-            state.viz_required = state.intent == "requiere_visualizacion"
+            state.sub_type = intent_result.get("sub_type", "valor_puntual")
             state.titulo_grafica = intent_result.get("titulo_grafica")
             state.is_tasa = intent_result.get("is_tasa", False)
 
-            # Guard: prevent incorrect temporal inheritance from conversation context
-            self._guard_temporality(intent_result, message)
-            state.temporality = intent_result.get("temporality", "estatico")
+            # Parse and validate sub_type
+            sub_type_enum = get_subtype_from_string(state.sub_type)
+            if sub_type_enum is None:
+                logger.warning(
+                    "Invalid sub_type '%s', defaulting to valor_puntual", state.sub_type
+                )
+                sub_type_enum = SubType.VALOR_PUNTUAL
+                state.sub_type = sub_type_enum.value
 
-            state.subject_cardinality = intent_result.get("subject_cardinality", 1)
+            # Auto-populate legacy fields for backward compatibility
+            state.arquetipo = get_archetype_name(get_legacy_archetype(sub_type_enum))
+            state.viz_required = state.intent == "requiere_visualizacion"
+            state.temporality = get_temporality(sub_type_enum)
+            state.pattern_type = get_pattern_type(sub_type_enum)
+
             ctx.set_result(intent_result)
 
-        if state.pattern_type != PatternType.COMPARACION:
+        # Gate: blocked sub_types get a "not supported" response
+        if is_blocked(sub_type_enum):
             response = self._format_non_comparacion_response(state, intent_result)
             self.session_logger.end_session(
                 success=True,
@@ -355,24 +314,21 @@ class PipelineOrchestrator:
         if not (state.viz_required and state.sql_results):
             return None
 
-        archetype_letter = get_archetype_letter_by_name(state.arquetipo or "")
-        if archetype_letter:
-            temporality = Temporality(state.temporality) if state.temporality else Temporality.STATIC
-            state.tipo_grafico = get_chart_type_for_archetype(
-                archetype_letter,
-                temporality=temporality,
-                subject_cardinality=state.subject_cardinality,
-            )
+        sub_type_enum = get_subtype_from_string(state.sub_type or "valor_puntual")
+        if sub_type_enum:
+            state.tipo_grafico = get_chart_type_for_subtype(sub_type_enum)
         else:
             state.tipo_grafico = None
         logger.info(
-            "Determined chart type: %s for archetype: %s", state.tipo_grafico, state.arquetipo
+            "Determined chart type: %s for sub_type: %s", state.tipo_grafico, state.sub_type
         )
 
         if state.tipo_grafico == ChartType.STACKED_BAR:
             state.tipo_grafico = self._guard_stacked_bar(state.sql_results)
 
-        viz_prompt = build_viz_mapping_prompt(chart_type=state.tipo_grafico)
+        viz_prompt = build_viz_mapping_prompt(
+            chart_type=state.tipo_grafico, sub_type=state.sub_type,
+        )
         viz_input = {
             "user_id": state.user_id,
             "columns": list(state.sql_results[0].keys()) if state.sql_results else [],
@@ -380,6 +336,7 @@ class PipelineOrchestrator:
             "total_filas": len(state.sql_results or []),
             "original_question": message,
             "tipo_grafico": state.tipo_grafico,
+            "sub_type": state.sub_type,
         }
 
         async with timed_step(
@@ -395,6 +352,7 @@ class PipelineOrchestrator:
                 tablas=state.selected_tables,
                 resumen=state.sql_resumen,
                 chart_type=state.tipo_grafico,
+                sub_type=state.sub_type,
             )
             state.powerbi_url = viz_result.get("powerbi_url")
             state.data_points = viz_result.get("data_points")

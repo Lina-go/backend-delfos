@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     # Intent Agent
     intent_agent_model: str = "gpt-4o-mini"
     intent_temperature: float = 0.0
-    intent_max_tokens: int = 300
+    intent_max_tokens: int = 500
 
     # SQL Agent
     sql_agent_model: str = "claude-sonnet-4-5"
@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     format_agent_model: str = "gpt-4o-mini"
     format_temperature: float = 0.0
     format_max_tokens: int = 1024
+
+    # Suggest Labels Agent
+    suggest_labels_agent_model: str = "gpt-4o-mini"
+    suggest_labels_temperature: float = 0.3
+    suggest_labels_max_tokens: int = 1024
+    suggest_labels_timeout: float = 15.0
 
     # CORS
     allowed_origins: list[str] = ["*"]

@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from src.config.prompts import build_intent_system_prompt
+from src.config.prompts.intent_hierarchical import build_intent_hierarchical_prompt
 from src.config.settings import Settings
 from src.orchestrator.handlers._llm_helper import run_formatted_handler_agent
 from src.services.intent.models import IntentResult
@@ -30,7 +30,7 @@ class IntentClassifier:
             Dictionary with intent, pattern_type, and reasoning
         """
         try:
-            system_prompt = build_intent_system_prompt()
+            system_prompt = build_intent_hierarchical_prompt()
 
             result_model = await run_formatted_handler_agent(
                 self.settings,
@@ -67,9 +67,10 @@ class IntentClassifier:
             return {
                 "user_question": message,
                 "intent": "nivel_puntual",
-                "tipo_patron": "Comparación",
+                "sub_type": "valor_puntual",
+                "tipo_patron": "Comparacion",
                 "arquetipo": "A",
-                "razon": f"Error in classification: {str(e)}",
+                "razon": f"Error in classification: {e}",
                 "temporality": "estatico",
                 "subject_cardinality": 1,
             }

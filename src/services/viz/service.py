@@ -19,6 +19,10 @@ class VisualizationService:
 
     _YEAR_NAMES: frozenset[str] = frozenset({"year", "año", "anio", "yr"})
     _MONTH_NAMES: frozenset[str] = frozenset({"month", "mes", "mn"})
+    _SINGLE_SERIES_SUBTYPES: frozenset[str] = frozenset({
+        "tendencia_simple", "composicion_simple", "concentracion", "valor_puntual",
+        "comparacion_directa", "ranking",
+    })
 
     def __init__(self, settings: Settings, db_tools: DelfosTools | None = None):
         """Initialize visualization service.
@@ -39,6 +43,7 @@ class VisualizationService:
         tablas: list[str] | None = None,
         resumen: str | None = "",
         chart_type: str | None = None,
+        sub_type: str | None = None,
     ) -> dict[str, Any]:
         """Generate visualization for SQL results.
 
@@ -64,7 +69,7 @@ class VisualizationService:
                 ensure_ascii=False,
             )
 
-            system_prompt = build_viz_mapping_prompt(chart_type=chart_type)
+            system_prompt = build_viz_mapping_prompt(chart_type=chart_type, sub_type=sub_type)
 
             mapping = await run_formatted_handler_agent(
                 self.settings,
@@ -87,6 +92,20 @@ class VisualizationService:
             # --- Guard: stacked bar x != series ---
             if chart_type and "stack" in chart_type.lower():
                 mapping = self._guard_stacked_bar_axes(mapping, columns)
+
+            # --- Guard: single-series sub_types must not have series/category ---
+            if sub_type and sub_type in self._SINGLE_SERIES_SUBTYPES:
+                if mapping.series_column or mapping.category_column:
+                    logger.info(
+                        "Guard: sub_type=%s is single-series, clearing series=%s category=%s",
+                        sub_type, mapping.series_column, mapping.category_column,
+                    )
+                    mapping = mapping.model_copy(update={
+                        "series_column": None,
+                        "category_column": None,
+                        "series_name": None,
+                        "category_name": None,
+                    })
 
             logger.info(
                 "LLM mapping: x=%s, y=%s, month=%s, series=%s, category=%s, x_format=%s",
@@ -257,6 +276,7 @@ class VisualizationService:
                 "x_column": year_col,
                 "month_column": month_col,
                 "x_format": "YYYY-MM",
+                "x_axis_name": "Periodo",
             })
         return mapping
 

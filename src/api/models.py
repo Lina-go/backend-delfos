@@ -194,6 +194,8 @@ class InformeGraph(BaseModel):
     title: str
     query: str | None = None
     created_at: datetime | None = None
+    label_id: str | None = None
+    label_name: str | None = None
 
     @classmethod
     def from_db_row(cls, row: dict[str, Any]) -> "InformeGraph":
@@ -205,11 +207,33 @@ class InformeGraph(BaseModel):
             title=str(row.get("title", "")),
             query=row.get("query"),
             created_at=row.get("created_at"),
+            label_id=str(v) if (v := row.get("label_id")) else None,
+            label_name=str(v) if (v := row.get("label_name")) else None,
+        )
+
+
+class InformeLabel(BaseModel):
+    """A label/tab within an informe for organizing graphs."""
+
+    id: str
+    informe_id: str
+    name: str
+    created_at: datetime | None = None
+    chart_count: int = 0
+
+    @classmethod
+    def from_db_row(cls, row: dict[str, Any]) -> "InformeLabel":
+        return cls(
+            id=str(row["id"]),
+            informe_id=str(row["informe_id"]),
+            name=str(row["name"]),
+            created_at=row.get("created_at"),
+            chart_count=row.get("chart_count", 0),
         )
 
 
 class InformeDetail(BaseModel):
-    """Full informe with its graphs."""
+    """Full informe with its graphs and labels."""
 
     id: str
     title: str
@@ -217,6 +241,7 @@ class InformeDetail(BaseModel):
     owner: str | None = None
     created_at: datetime | None = None
     graphs: list[InformeGraph] = []
+    labels: list[InformeLabel] = []
 
 
 class CreateInformeRequest(BaseModel):
@@ -231,12 +256,55 @@ class AddGraphsToInformeRequest(BaseModel):
     """Request to add one or more graphs to an informe."""
 
     graph_ids: list[str] = Field(..., min_length=1)
+    label_id: str | None = Field(None, description="Optional label to assign to all added graphs")
 
 
 class DeleteInformesRequest(BaseModel):
     """Request to delete multiple informes."""
 
     informe_ids: list[str] = Field(..., min_length=1)
+
+
+class CreateLabelRequest(BaseModel):
+    """Request to create a new label within an informe."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class UpdateLabelRequest(BaseModel):
+    """Request to rename a label."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class UpdateChartLabelRequest(BaseModel):
+    """Request to change a chart's label (move to different tab)."""
+
+    label_id: str | None = Field(None, description="Target label ID, or null to remove the label")
+
+
+class SuggestLabelsRequest(BaseModel):
+    """Request to suggest label groupings for selected graphs."""
+
+    graph_ids: list[str] = Field(..., min_length=1)
+
+
+class LabelSuggestion(BaseModel):
+    """A single label suggestion with its assigned graphs."""
+
+    label_name: str
+    graph_ids: list[str]
+
+
+class SuggestLabelsResponse(BaseModel):
+    """Response with suggested label groupings."""
+
+    suggestions: list[LabelSuggestion]
+
+
+# ---------------------------------------------------------------------------
+# Shared response models
+# ---------------------------------------------------------------------------
 
 
 class OperationResponse(BaseModel):

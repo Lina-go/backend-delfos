@@ -3,7 +3,10 @@ Visualization agent system prompts.
 """
 
 
-def build_viz_mapping_prompt(chart_type: str | None = None) -> str:
+def build_viz_mapping_prompt(
+    chart_type: str | None = None,
+    sub_type: str | None = None,
+) -> str:
     """Build lightweight prompt that asks the LLM for column mapping only.
 
     The LLM receives column names + 3 sample rows and returns which columns
@@ -45,7 +48,28 @@ def build_viz_mapping_prompt(chart_type: str | None = None) -> str:
         "Tu tarea es SOLO indicar qué columna SQL corresponde a cada campo de la visualización. "
         "NO formatees datos, solo indica los nombres de columnas y las etiquetas.\n\n"
         f"{chart_rules}"
-        "## Regla crítica para series_column y category_column\n"
+        + (
+            f"## Regla de series según sub_type: {sub_type}\n"
+            "- **tendencia_simple**: UNA sola línea. "
+            "series_column = null, category_column = null, series_name = null, category_name = null\n"
+            "- **tendencia_comparada**: MÚLTIPLES líneas. "
+            "series_column = category_column = columna categórica (texto/string)\n"
+            "- **composicion_simple / concentracion**: UN solo gráfico. "
+            "series_column = null, category_column = null, series_name = null, category_name = null\n"
+            "- **composicion_comparada**: Breakdown comparado. "
+            "series_column = category_column = columna categórica\n"
+            "- **comparacion_directa / ranking**: Barras simples. "
+            "series_column = null, category_column = null\n"
+            "- **evolucion_composicion / evolucion_concentracion**: Stacked temporal. "
+            "series_column = category_column = columna categórica\n\n"
+            "REGLA CRÍTICA: Si sub_type indica serie única "
+            "(tendencia_simple, composicion_simple, concentracion, comparacion_directa, ranking), "
+            "SIEMPRE devuelve series_column = null, category_column = null, "
+            "series_name = null, category_name = null.\n\n"
+            if sub_type
+            else ""
+        )
+        + "## Regla crítica para series_column y category_column\n"
         "- DEBEN ser columnas CATEGÓRICAS (texto/string): nombres de entidades, tipos de producto, etc.\n"
         "- NUNCA usar una columna numérica (métricas, porcentajes, saldos) como series o category.\n"
         "- Si NO existe columna categórica/string en los datos, devuelve series_column = null y category_column = null.\n\n"
@@ -59,9 +83,11 @@ def build_viz_mapping_prompt(chart_type: str | None = None) -> str:
         "  - En caso de duda, preferir la columna FINAL/DERIVADA (usualmente la última numérica)\n\n"
         "## Formato temporal\n"
         "- Si year y month son columnas SEPARADAS (ej: year=2025, month=2): "
-        "x_column = columna del año, month_column = columna del mes, x_format = 'YYYY-MM'\n"
+        "x_column = columna del año, month_column = columna del mes, x_format = 'YYYY-MM', "
+        "x_axis_name = 'Periodo'\n"
         "- Si hay una sola columna con fecha codificada como número (ej: 202401 = enero 2024): "
-        "x_column = esa columna, month_column = null, x_format = 'YYYY-MM'\n"
+        "x_column = esa columna, month_column = null, x_format = 'YYYY-MM', "
+        "x_axis_name = 'Periodo'\n"
         "- Si x es texto directo: x_format = null, month_column = null\n\n"
         "## Respuesta\n"
         "Responde SOLO con JSON dentro de tags <answer>:\n"

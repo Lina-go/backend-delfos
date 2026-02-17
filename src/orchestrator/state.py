@@ -19,6 +19,7 @@ class PipelineState:
     intent: str | None = None  # nivel_puntual | requiere_viz
     pattern_type: str | None = None  # comparacion | relacion | proyeccion | simulacion
     arquetipo: str | None = None
+    sub_type: str | None = None
     titulo_grafica: str | None = None
     is_tasa: bool = False
     temporality: str | None = None  # "estatico" or "temporal"

@@ -8,10 +8,16 @@ from src.api.models import (
     AddGraphsToInformeRequest,
     BulkOperationResponse,
     CreateInformeRequest,
+    CreateLabelRequest,
     DeleteInformesRequest,
     InformeDetail,
+    InformeLabel,
     InformeSummary,
     OperationResponse,
+    SuggestLabelsRequest,
+    SuggestLabelsResponse,
+    UpdateChartLabelRequest,
+    UpdateLabelRequest,
 )
 from src.config.constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from src.config.settings import Settings, get_settings
@@ -71,7 +77,7 @@ async def add_graphs_to_informe(
 ) -> dict[str, Any]:
     """Add one or more graphs to an informe."""
     svc = InformeService(settings)
-    return await svc.add_graphs(informe_id, request.graph_ids)
+    return await svc.add_graphs(informe_id, request.graph_ids, request.label_id)
 
 
 @router.delete(
@@ -108,3 +114,90 @@ async def delete_informes_bulk(
     svc = InformeService(settings)
     deleted_count = await svc.delete_bulk(request.informe_ids)
     return BulkOperationResponse(deleted_count=deleted_count)
+
+
+# ---------------------------------------------------------------------------
+# Label endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{informe_id}/labels", response_model=list[InformeLabel])
+async def list_labels(
+    informe_id: str,
+    settings: Settings = Depends(get_settings),
+) -> list[InformeLabel]:
+    """List all labels for an informe with chart counts."""
+    svc = InformeService(settings)
+    return await svc.list_labels(informe_id)
+
+
+@router.post(
+    "/{informe_id}/labels",
+    response_model=InformeLabel,
+    status_code=201,
+)
+async def create_label(
+    informe_id: str,
+    request: CreateLabelRequest,
+    settings: Settings = Depends(get_settings),
+) -> InformeLabel:
+    """Create a new label for organizing charts."""
+    svc = InformeService(settings)
+    return await svc.create_label(informe_id, request.name)
+
+
+@router.patch(
+    "/{informe_id}/labels/{label_id}",
+    response_model=InformeLabel,
+)
+async def update_label(
+    informe_id: str,
+    label_id: str,
+    request: UpdateLabelRequest,
+    settings: Settings = Depends(get_settings),
+) -> InformeLabel:
+    """Rename a label."""
+    svc = InformeService(settings)
+    return await svc.update_label(informe_id, label_id, request.name)
+
+
+@router.delete(
+    "/{informe_id}/labels/{label_id}",
+    response_model=OperationResponse,
+)
+async def delete_label(
+    informe_id: str,
+    label_id: str,
+    settings: Settings = Depends(get_settings),
+) -> OperationResponse:
+    """Delete a label (only if no charts are assigned to it)."""
+    svc = InformeService(settings)
+    await svc.delete_label(informe_id, label_id)
+    return OperationResponse(id=label_id)
+
+
+@router.patch(
+    "/{informe_id}/graphs/{item_id}/label",
+    response_model=OperationResponse,
+)
+async def update_chart_label(
+    informe_id: str,
+    item_id: str,
+    request: UpdateChartLabelRequest,
+    settings: Settings = Depends(get_settings),
+) -> OperationResponse:
+    """Assign or remove a label from a chart (move to different tab)."""
+    svc = InformeService(settings)
+    await svc.update_graph_label(informe_id, item_id, request.label_id)
+    return OperationResponse(id=item_id)
+
+
+@router.post("/suggest-labels", response_model=SuggestLabelsResponse)
+async def suggest_labels(
+    request: SuggestLabelsRequest,
+    settings: Settings = Depends(get_settings),
+) -> SuggestLabelsResponse:
+    """Get AI-powered label suggestions for graphs."""
+    svc = InformeService(settings)
+    suggestions = await svc.suggest_labels(request.graph_ids)
+    return SuggestLabelsResponse(suggestions=suggestions)
