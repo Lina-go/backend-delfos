@@ -48,6 +48,9 @@ class ChatResponse(BaseModel):
     link_power_bi: str | None = Field(None, description="Power BI URL")
     insight: str | None = Field(None, description="Generated insight")
     sql_query: str | None = Field(None, description="Generated SQL query")
+    stats_summary: dict[str, Any] | None = Field(
+        None, description="Correlation/relationship statistics for scatter analysis"
+    )
     error: str | None = Field(
         "", description="Error message if error occurred, empty string otherwise"
     )
@@ -320,3 +323,39 @@ class BulkOperationResponse(BaseModel):
 
     status: str = "success"
     deleted_count: int
+
+
+# ---------------------------------------------------------------------------
+# Advisor models
+# ---------------------------------------------------------------------------
+
+
+class AdvisorChatRequest(BaseModel):
+    """Request for advisor chat."""
+
+    user_id: str = Field(..., min_length=1, max_length=100, description="User identifier")
+    informe_id: str = Field(..., min_length=1, description="Informe identifier")
+    message: str = Field(
+        ..., min_length=1, max_length=2000, description="User message to the advisor"
+    )
+
+
+class AdvisorChatResponse(BaseModel):
+    """Response from advisor chat."""
+
+    response: str = Field(..., description="Advisor response text")
+    informe_id: str = Field(..., description="Informe identifier")
+
+
+class ProactiveInsightsRequest(BaseModel):
+    """Request for proactive insights when opening an informe."""
+
+    user_id: str = Field(..., min_length=1, max_length=100, description="User identifier")
+    informe_id: str = Field(..., min_length=1, description="Informe identifier")
+
+
+class ProactiveInsightsResponse(BaseModel):
+    """Response with proactive insights for an informe."""
+
+    insights: str = Field(..., description="Proactive analysis and alerts")
+    informe_id: str = Field(..., description="Informe identifier")

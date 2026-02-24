@@ -46,15 +46,16 @@ class ResultVerifier:
         """
         # Execution errors are always handled by code-based verification
         if execution_error:
-            return await self._verify_with_code(results, sql, execution_error)
+            return await self._verify_with_code(results, sql, question, execution_error)
         if self.settings.use_llm_verification:
             return await self._verify_with_llm(results, sql, question)
-        return await self._verify_with_code(results, sql)
+        return await self._verify_with_code(results, sql, question)
 
     async def _verify_with_code(
         self,
         results: list[dict[str, Any]],
         sql: str,
+        question: str = "",
         execution_error: str | None = None,
     ) -> VerificationResult:
         """Verify results using code-based validation."""
@@ -156,6 +157,56 @@ class ResultVerifier:
                     summary=f"Conjunto de resultados muy grande: {len(results)} filas",
                 )
 
+            # Check 6: Wide-format detection — aggregate metrics as extra columns
+            # instead of additional rows (UNION ALL). The visualization layer maps
+            # ONE y_column, so extra numeric columns are silently lost.
+            if results and question:
+                aggregate_kw = [
+                    "conjunto", "total", "agregado", "consolidado",
+                    "combinado", "suma de", "todos los",
+                ]
+                q_lower = question.lower()
+                asks_for_aggregate = any(kw in q_lower for kw in aggregate_kw)
+
+                if asks_for_aggregate:
+                    first_row = results[0]
+                    time_cols = {"year", "month"}
+                    numeric_cols = [
+                        col for col, val in first_row.items()
+                        if isinstance(val, (int, float))
+                        and col.lower() not in time_cols
+                    ]
+                    # More than 3 non-temporal numeric columns strongly suggests
+                    # the SQL is returning aggregate info as extra columns
+                    if len(numeric_cols) > 3:
+                        col_list = ", ".join(numeric_cols)
+                        logger.warning(
+                            "Wide-format detected: %d numeric columns (%s) "
+                            "while question asks for aggregate group",
+                            len(numeric_cols), col_list,
+                        )
+                        return VerificationResult(
+                            passed=False,
+                            issues=[
+                                f"The query returns {len(numeric_cols)} numeric columns "
+                                f"({col_list}). The user asked for an aggregate group "
+                                "which should appear as additional ROWS (using UNION ALL), "
+                                "not as extra columns. The visualization can only display "
+                                "one Y-axis metric at a time."
+                            ],
+                            suggestion=(
+                                "Restructure the query: keep the individual entity rows "
+                                "with a single numeric metric column, then UNION ALL with "
+                                "aggregate rows that use a label (e.g., 'Grupo Aval') in "
+                                "the entity column. Remove the extra numeric columns — "
+                                "the chart only uses one y_column."
+                            ),
+                            summary=(
+                                "Formato wide detectado: las agregaciones deben ser "
+                                "filas adicionales (UNION ALL), no columnas extra"
+                            ),
+                        )
+
             return VerificationResult(
                 passed=True,
                 issues=[],
@@ -217,4 +268,4 @@ class ResultVerifier:
         except Exception as e:
             logger.error("LLM verification error: %s", e, exc_info=True)
             # Fallback to code-based verification on error
-            return await self._verify_with_code(results, sql)
+            return await self._verify_with_code(results, sql, question)

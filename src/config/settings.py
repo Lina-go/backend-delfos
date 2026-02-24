@@ -129,6 +129,31 @@ class Settings(BaseSettings):
     suggest_labels_max_tokens: int = 1024
     suggest_labels_timeout: float = 15.0
 
+    # Advisor Agent
+    advisor_agent_model: str = "gpt-4o-mini"
+    advisor_max_tokens: int = 4096
+    advisor_temperature: float = 0.3
+
+    # Chat V2 Agent
+    chat_v2_agent_model: str = "claude-sonnet-4-5"
+    chat_v2_max_tokens: int = 1024
+    chat_v2_temperature: float = 0.2
+    chat_v2_classifier_model: str = "claude-sonnet-4-5"
+
+    # Chat V2 Compaction (session memory)
+    chat_v2_compaction_soft_threshold: int = 20
+    chat_v2_compaction_hard_threshold: int = 40
+    chat_v2_compaction_keep_recent: int = 4
+    chat_v2_compaction_model: str = "gpt-4o-mini"
+
+    # Semantic Cache (Azure OpenAI Embeddings)
+    aoai_embedding_endpoint: str = ""
+    aoai_embedding_key: str = ""
+    aoai_embedding_deployment: str = "text-embedding-3-small"
+    semantic_cache_threshold: float = 0.82
+    semantic_cache_ttl: int = 1800
+    semantic_cache_max_size: int = 200
+
     # CORS
     allowed_origins: list[str] = ["*"]
 

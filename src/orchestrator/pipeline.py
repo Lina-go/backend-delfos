@@ -38,6 +38,7 @@ from src.orchestrator.handlers import (
 from src.orchestrator.sql_flow import SQLFlowOrchestrator
 from src.orchestrator.state import PipelineState
 from src.orchestrator.step_timer import timed_step
+from src.patterns import get_hooks
 from src.services.formatting.formatter import ResponseFormatter
 from src.services.intent.classifier import IntentClassifier
 from src.services.schema.service import SchemaService
@@ -46,6 +47,7 @@ from src.services.sql.generator import SQLGenerator
 from src.services.sql.validation import SQLValidationService
 from src.services.triage.classifier import TriageClassifier
 from src.services.verification.verifier import ResultVerifier
+from src.services.viz.formatter import build_data_points
 from src.services.viz.service import VisualizationService
 
 logger = logging.getLogger(__name__)
@@ -309,16 +311,27 @@ class PipelineOrchestrator:
         state: PipelineState,
         message: str,
         db_tools: DelfosTools | None = None,
+        hooks=None,
     ) -> dict[str, Any] | None:
-        """Execute visualization step."""
+        """Execute visualization step.
+
+        Separated flow:
+          1. LLM mapping (viz service — only columns + 3 sample rows)
+          2. Data point building (code — all rows)
+          3. DB insert (direct — all data_points)
+        """
         if not (state.viz_required and state.sql_results):
             return None
 
-        sub_type_enum = get_subtype_from_string(state.sub_type or "valor_puntual")
-        if sub_type_enum:
-            state.tipo_grafico = get_chart_type_for_subtype(sub_type_enum)
+        # Hook: chart type override (e.g., relacion → scatter)
+        if hooks and hooks.get_chart_type:
+            state.tipo_grafico = hooks.get_chart_type(state.sub_type)
         else:
-            state.tipo_grafico = None
+            sub_type_enum = get_subtype_from_string(state.sub_type or "valor_puntual")
+            if sub_type_enum and not is_blocked(sub_type_enum):
+                state.tipo_grafico = get_chart_type_for_subtype(sub_type_enum)
+            else:
+                state.tipo_grafico = None
         logger.info(
             "Determined chart type: %s for sub_type: %s", state.tipo_grafico, state.sub_type
         )
@@ -326,14 +339,38 @@ class PipelineOrchestrator:
         if state.tipo_grafico == ChartType.STACKED_BAR:
             state.tipo_grafico = self._guard_stacked_bar(state.sql_results)
 
+        columns = list(state.sql_results[0].keys()) if state.sql_results else []
+        rows = state.sql_results or []
+        n = len(rows)
+
+        # Spaced sample rows to capture diverse values (e.g., different entities)
+        if n <= 5:
+            sample_rows = rows
+        else:
+            step = max(1, n // 5)
+            sample_rows = [rows[i * step] for i in range(min(5, n))]
+
+        # Column stats: unique values per column for LLM cardinality awareness
+        max_unique_shown = 15
+        column_stats: dict[str, Any] = {}
+        for col in columns:
+            unique_vals = list({row.get(col) for row in rows})
+            count = len(unique_vals)
+            column_stats[col] = {
+                "unique_count": count,
+                "unique_values": unique_vals[:max_unique_shown] if count <= max_unique_shown else None,
+                "sample_values": unique_vals[:5] if count > max_unique_shown else None,
+            }
+
         viz_prompt = build_viz_mapping_prompt(
             chart_type=state.tipo_grafico, sub_type=state.sub_type,
         )
         viz_input = {
             "user_id": state.user_id,
-            "columns": list(state.sql_results[0].keys()) if state.sql_results else [],
-            "sample_rows": (state.sql_results or [])[:3],
-            "total_filas": len(state.sql_results or []),
+            "columns": columns,
+            "sample_rows": sample_rows,
+            "column_stats": column_stats,
+            "total_filas": n,
             "original_question": message,
             "tipo_grafico": state.tipo_grafico,
             "sub_type": state.sub_type,
@@ -344,24 +381,69 @@ class PipelineOrchestrator:
             input_text=json.dumps(viz_input, indent=2, ensure_ascii=False),
             system_prompt=viz_prompt,
         ) as ctx:
-            viz_result = await self.viz.generate(
-                state.sql_results,
-                state.user_id,
-                message,
-                sql_query=state.sql_query,
-                tablas=state.selected_tables,
-                resumen=state.sql_resumen,
-                chart_type=state.tipo_grafico,
-                sub_type=state.sub_type,
+            # 1. LLM mapping (spaced sample + column stats)
+            mapping = await self.viz.get_mapping(
+                columns, sample_rows, message,
+                chart_type=state.tipo_grafico, sub_type=state.sub_type,
+                column_stats=column_stats,
             )
-            state.powerbi_url = viz_result.get("powerbi_url")
-            state.data_points = viz_result.get("data_points")
-            state.metric_name = viz_result.get("metric_name")
-            state.run_id = viz_result.get("run_id")
-            state.x_axis_name = viz_result.get("x_axis_name")
-            state.y_axis_name = viz_result.get("y_axis_name")
-            state.series_name = viz_result.get("series_name")
-            state.category_name = viz_result.get("category_name")
+            if mapping is None:
+                ctx.set_result({"error": "Column mapping failed"})
+                return None
+
+            # 2. Build data_points by code (all rows)
+            if hooks and hooks.build_data_points:
+                data_points = hooks.build_data_points(state.sql_results, mapping)
+                logger.info("Hook formatted %s data points", len(data_points))
+            else:
+                data_points = build_data_points(state.sql_results, mapping)
+                logger.info("Python formatted %s data points", len(data_points))
+
+            if state.tipo_grafico != "scatter":
+                data_points = VisualizationService.limit_categories(
+                    data_points, self.settings.viz_max_categories,
+                )
+                logger.info("After category limiting: %s data points", len(data_points))
+
+            # 3. DB insert
+            run_id = None
+            powerbi_url = None
+            if self.db_tools is not None:
+                run_id = self.db_tools.insert_agent_output_batch(
+                    user_id=state.user_id,
+                    question=message,
+                    results=data_points,
+                    metric_name=mapping.metric_name,
+                    visual_hint=state.tipo_grafico or "barras",
+                )
+                logger.info("insert_agent_output_batch returned run_id: %s", run_id)
+                if run_id:
+                    powerbi_url = self.db_tools.generate_powerbi_url(
+                        run_id=run_id,
+                        visual_hint=state.tipo_grafico or "barras",
+                    )
+
+            # 4. Update state
+            state.data_points = data_points
+            state.metric_name = mapping.metric_name
+            state.x_axis_name = mapping.x_axis_name
+            state.y_axis_name = mapping.y_axis_name
+            state.series_name = mapping.series_name
+            state.category_name = mapping.category_name
+            state.powerbi_url = powerbi_url
+            state.run_id = run_id
+
+            viz_result = {
+                "tipo_grafico": state.tipo_grafico,
+                "metric_name": mapping.metric_name,
+                "x_axis_name": mapping.x_axis_name,
+                "y_axis_name": mapping.y_axis_name,
+                "series_name": mapping.series_name,
+                "category_name": mapping.category_name,
+                "data_points": data_points,
+                "powerbi_url": powerbi_url,
+                "run_id": run_id,
+            }
             ctx.set_result(viz_result)
         return viz_result
 
@@ -477,7 +559,7 @@ class PipelineOrchestrator:
                 return handler_response
 
             intent_result = await self._step_intent(state, message, context=context)
-            if state.pattern_type != PatternType.COMPARACION:
+            if state.pattern_type not in ("comparacion", "relacion"):
                 # Record assistant turn for non-comparacion
                 ConversationStore.add_turn(
                     user_id, "assistant", intent_result.get("reasoning", ""),
@@ -485,6 +567,8 @@ class PipelineOrchestrator:
                     max_history_turns=self.settings.max_history_turns,
                 )
                 return intent_result
+
+            hooks = get_hooks(state.sub_type)
 
             await self._step_schema(state, message, db_tools=self.db_tools)
 
@@ -494,6 +578,7 @@ class PipelineOrchestrator:
                 state,
                 sql_message,
                 db_tools=self.db_tools,
+                hooks=hooks,
             )
             if sql_error:
                 errors.append(sql_error.get("error", ""))
@@ -504,8 +589,15 @@ class PipelineOrchestrator:
                 )
                 return sql_error
 
+            # Post-process hook (e.g., correlation stats for relacion)
+            if hooks.post_process and state.sql_results:
+                try:
+                    hooks.post_process(state.sql_results, state)
+                except Exception as e:
+                    logger.warning("post_process hook failed: %s", e, exc_info=True)
+
             viz_result = await self._step_visualization(
-                state, message, db_tools=self.db_tools
+                state, message, db_tools=self.db_tools, hooks=hooks,
             )
 
             final_response = await self._step_format(state)
@@ -627,7 +719,7 @@ class PipelineOrchestrator:
                     "viz_required": state.viz_required,
                 },
             }
-            if state.pattern_type != PatternType.COMPARACION:
+            if state.pattern_type not in ("comparacion", "relacion"):
                 # Record assistant turn for non-comparacion
                 ConversationStore.add_turn(
                     user_id, "assistant", intent_result.get("reasoning", ""),
@@ -636,6 +728,8 @@ class PipelineOrchestrator:
                 )
                 yield {"step": "complete", "response": intent_result}
                 return
+
+            hooks = get_hooks(state.sub_type)
 
             schema_result = await self._step_schema(state, message, db_tools=self.db_tools)
             yield {
@@ -650,6 +744,7 @@ class PipelineOrchestrator:
                 state,
                 sql_message,
                 db_tools=self.db_tools,
+                hooks=hooks,
             ):
                 yield sql_event
 
@@ -665,8 +760,15 @@ class PipelineOrchestrator:
                     yield {"step": "complete", "response": sql_event["result"]}
                     return
 
+            # Post-process hook (e.g., correlation stats for relacion)
+            if hooks.post_process and state.sql_results:
+                try:
+                    hooks.post_process(state.sql_results, state)
+                except Exception as e:
+                    logger.warning("post_process hook failed: %s", e, exc_info=True)
+
             viz_result = await self._step_visualization(
-                state, message, db_tools=self.db_tools
+                state, message, db_tools=self.db_tools, hooks=hooks,
             )
             if viz_result:
                 yield {

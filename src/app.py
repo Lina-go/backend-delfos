@@ -10,7 +10,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.api.routers import api_router
 from src.config.settings import Settings, get_settings
-from src.infrastructure.database.connection import ConnectionPool
+from src.infrastructure.database.connection import ConnectionPool, close_shared_sync_credential
 from src.infrastructure.llm.factory import close_shared_credential
 from src.infrastructure.logging.logger import setup_logging
 
@@ -49,6 +49,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup and shutdown lifecycle."""
     logger.info("Starting Delfos NL2SQL Pipeline")
     _validate_startup_config(settings)
+
+    # Eagerly initialise connection pools so the first request doesn't pay
+    # the cold-start cost (token acquisition + ODBC handshake).
+    if settings.use_direct_db:
+        try:
+            ConnectionPool.get_db_pool(settings)
+            ConnectionPool.get_wh_pool(settings)
+            logger.info("Connection pools initialised (DB + WH)")
+        except Exception as e:
+            logger.warning("Failed to pre-initialise connection pools: %s", e)
+
+        # Pre-init DelfosTools singleton so its pools are warm before first request
+        try:
+            from src.services.chat_v2.agent import _get_delfos_tools
+            _get_delfos_tools(settings)
+            logger.info("DelfosTools singleton pre-initialized")
+        except Exception as e:
+            logger.warning("DelfosTools pre-init failed (non-fatal): %s", e)
+
     yield
     logger.info("Shutting down Delfos NL2SQL Pipeline")
     try:
@@ -57,8 +76,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.error("Error closing connection pools: %s", e, exc_info=True)
     try:
+        close_shared_sync_credential()
+        logger.info("Shared sync credential closed")
+    except Exception as e:
+        logger.error("Error closing shared sync credential: %s", e, exc_info=True)
+    try:
         await close_shared_credential()
-        logger.info("Shared credential closed")
+        logger.info("Shared async credential closed")
     except Exception as e:
         logger.error("Error closing shared credential: %s", e, exc_info=True)
 

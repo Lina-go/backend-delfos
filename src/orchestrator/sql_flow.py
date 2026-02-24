@@ -8,6 +8,7 @@ from typing import Any
 
 from src.api.response import build_response
 from src.config.constants import PipelineStep, log_pipeline_step
+from src.patterns.registry import PatternHooks
 from src.config.prompts import (
     build_sql_execution_system_prompt,
     build_sql_generation_system_prompt,
@@ -58,9 +59,10 @@ class SQLFlowOrchestrator:
         message: str,
         *,
         db_tools: DelfosTools | None = None,
+        hooks: PatternHooks | None = None,
     ) -> dict[str, Any] | None:
         """Run SQL gen → exec → verify with retries.  Return error dict or None on success."""
-        async for event in self._run(state, message, db_tools=db_tools):
+        async for event in self._run(state, message, db_tools=db_tools, hooks=hooks):
             if event.get("step") == "sql_generation" and event.get("result", {}).get("error"):
                 result: dict[str, Any] = event["result"]
                 return result
@@ -72,9 +74,10 @@ class SQLFlowOrchestrator:
         message: str,
         *,
         db_tools: DelfosTools | None = None,
+        hooks: PatternHooks | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Same as *execute* but yields step events for SSE streaming."""
-        async for event in self._run(state, message, db_tools=db_tools):
+        async for event in self._run(state, message, db_tools=db_tools, hooks=hooks):
             yield event
 
     async def _run(
@@ -83,6 +86,7 @@ class SQLFlowOrchestrator:
         message: str,
         *,
         db_tools: DelfosTools | None = None,
+        hooks: PatternHooks | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         max_verification_retries = self.settings.sql_max_verification_retries
         verification_attempt = 0
@@ -109,6 +113,7 @@ class SQLFlowOrchestrator:
                 retry_message if verification_attempt > 0 else message,
                 max_retries=self.settings.sql_max_retries,
                 db_tools=db_tools,
+                hooks=hooks,
             )
             yield {
                 "step": "sql_generation",
@@ -169,6 +174,7 @@ class SQLFlowOrchestrator:
         message: str,
         max_retries: int = 2,
         db_tools: DelfosTools | None = None,
+        hooks: PatternHooks | None = None,
     ) -> dict[str, Any]:
         """SQL generation with validation retry loop."""
         log_pipeline_step(PipelineStep.SQL_GENERATION)
@@ -184,6 +190,9 @@ class SQLFlowOrchestrator:
                 prioritized_tables=prioritized_tables,
                 temporality=state.temporality,
             )
+            # Hook: enrich SQL prompt (e.g., relacion adds JOIN override, comparacion adds 12-month default)
+            if hooks and hooks.enrich_sql_prompt:
+                sql_prompt = hooks.enrich_sql_prompt(sql_prompt, state)
             start_time = time.time()
             sql_result = await self.sql_gen.generate(
                 message=message,
@@ -195,6 +204,8 @@ class SQLFlowOrchestrator:
                 previous_errors=validation_errors,
                 previous_sql=previous_sql,
                 db_tools=db_tools,
+                system_prompt_override=sql_prompt,
+                sub_type=state.sub_type,
             )
             execution_time = (time.time() - start_time) * 1000
             state.sql_query = sql_result.get("sql")
@@ -220,6 +231,22 @@ class SQLFlowOrchestrator:
 
             sql_error = sql_result.get("error")
             if sql_error and not state.sql_query:
+                if attempt < max_retries - 1:
+                    # Retry: the LLM may have hallucinated unavailability
+                    # without actually calling get_distinct_values.
+                    validation_errors = [
+                        f"Previous attempt returned error: {sql_error}. "
+                        "This is likely WRONG. You MUST call get_distinct_values "
+                        "on NOMBRE_ENTIDAD and any other categorical column "
+                        "BEFORE concluding data is not available. "
+                        "Use the tools to verify, then generate the SQL."
+                    ]
+                    previous_sql = "(no SQL generated — agent returned error instead)"
+                    logger.warning(
+                        "SQL generation returned error (attempt %d/%d): %s. Retrying with tool hint...",
+                        attempt + 1, max_retries, sql_error,
+                    )
+                    continue
                 logger.warning("SQLGenerator could not generate query: %s", sql_error)
                 return build_response(
                     patron=state.pattern_type or "error",

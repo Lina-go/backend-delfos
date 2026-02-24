@@ -1,14 +1,18 @@
 """SQL executor service."""
 
+from __future__ import annotations
+
 import ast
 import datetime
 import logging
 import re
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.config.settings import Settings
-from src.infrastructure.database import DelfosTools
+
+if TYPE_CHECKING:
+    from src.infrastructure.database import DelfosTools
 
 logger = logging.getLogger(__name__)
 
@@ -199,10 +203,39 @@ class ColumnExtractor:
                     elif lower_text.startswith("from", i) and last_select_idx is not None:
                         last_from_idx = i
 
-        if last_select_idx is None or last_from_idx is None:
+        if last_select_idx is None:
             return ""
 
-        return text[last_select_idx + len("select") : last_from_idx].strip()
+        if last_from_idx is not None:
+            return text[last_select_idx + len("select") : last_from_idx].strip()
+
+        # SELECT without FROM (e.g., scalar subqueries from CTEs).
+        # Find next depth-0 terminator: ORDER BY, UNION, HAVING, or end of string.
+        end_idx = len(text)
+        depth2 = 0
+        in_s = False
+        in_d = False
+        scan_start = last_select_idx + len("select")
+        for j in range(scan_start, len(lower_text)):
+            ch2 = lower_text[j]
+            if ch2 == "'" and not in_d:
+                in_s = not in_s
+            elif ch2 == '"' and not in_s:
+                in_d = not in_d
+            elif not in_s and not in_d:
+                if ch2 == "(":
+                    depth2 += 1
+                elif ch2 == ")":
+                    depth2 = max(depth2 - 1, 0)
+                elif depth2 == 0:
+                    for kw in ("order by", "union", "having"):
+                        if lower_text.startswith(kw, j):
+                            end_idx = j
+                            break
+                    if end_idx != len(text):
+                        break
+
+        return text[scan_start:end_idx].strip()
 
     @staticmethod
     def _split_columns(select_clause: str) -> list[str]:

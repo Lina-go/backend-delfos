@@ -42,6 +42,7 @@ class CodeFormatter:
                 link_power_bi=state.powerbi_url,
                 insight=state.sql_insights or state.sql_resumen or "No insight available",
                 sql_query=state.sql_query,
+                stats_summary=state.stats_summary,
             )
 
         except Exception as e:

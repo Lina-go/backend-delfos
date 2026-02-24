@@ -55,6 +55,9 @@ class PipelineState:
     series_name: str | None = None
     category_name: str | None = None
 
+    # Pattern hooks (e.g., relacion correlation stats)
+    stats_summary: dict[str, Any] | None = None
+
     # Step 8: Final response
     final_response: dict[str, Any] | None = None
 

@@ -5,10 +5,8 @@ from typing import Any
 
 from src.config.prompts import build_triage_system_prompt
 from src.config.settings import Settings
-from src.infrastructure.database import DelfosTools
 from src.orchestrator.handlers._llm_helper import run_handler_agent
 from src.utils.json_parser import JSONParser
-from src.utils.tool_resolver import resolve_agent_tools
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +24,7 @@ class TriageClassifier:
         has_context: bool = False,
         context_summary: str | None = None,
         conversation_history: str | None = None,
-        db_tools: DelfosTools | None = None,
+        db_tools: Any | None = None,
     ) -> dict[str, Any]:
         """
         Classify a user message.
@@ -36,7 +34,7 @@ class TriageClassifier:
             has_context: Whether the user has previous conversation data
             context_summary: Summary of what data is available in context
             conversation_history: Formatted conversation history
-            db_tools: Optional DelfosTools instance for direct DB access
+            db_tools: Unused, kept for interface compatibility
 
         Returns:
             Dictionary with query_type and reasoning
@@ -48,16 +46,14 @@ class TriageClassifier:
                 conversation_history=conversation_history,
             )
 
-            agent_tools = resolve_agent_tools(db_tools, context="triage")
-
             response = await run_handler_agent(
                 self.settings,
                 name="TriageClassifier",
                 instructions=system_prompt,
                 message=message,
                 model=self.settings.triage_agent_model,
-                tools=agent_tools or [],
-                max_iterations=5,
+                tools=[],
+                max_iterations=1,
                 max_tokens=self.settings.triage_max_tokens,
                 temperature=self.settings.triage_temperature,
             )

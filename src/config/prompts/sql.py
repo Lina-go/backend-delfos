@@ -40,6 +40,39 @@ This question asks for a point-in-time snapshot or aggregated view.
 - Do NOT include year/month in GROUP BY unless essential to answer the question
 """
 
+    viz_format_hint = ""
+    if temporality:  # temporal or estatico → question will be visualized
+        viz_format_hint = """
+<visualization_output_format>
+The result of this query will be rendered as a chart. The visualization layer maps exactly ONE column to the X axis and ONE column to the Y axis, with an optional categorical column for series/grouping.
+
+Output structure rules:
+- Each entity, group, or category MUST appear as a separate ROW with identical column structure.
+- If the user asks for both individual items AND an aggregate (e.g., "cada banco del Grupo Aval y el grupo en conjunto"), use UNION ALL to add the aggregate as additional rows with a descriptive label in the entity column (e.g., 'Grupo Aval' as NOMBRE_ENTIDAD).
+- Do NOT add aggregate or derived metrics as extra columns. The chart can only display one Y metric at a time, so extra numeric columns are silently ignored.
+
+Example — individual banks + group total:
+```sql
+-- Individual banks
+SELECT year, month, NOMBRE_ENTIDAD, ROUND(SUM(CAST(SALDO AS BIGINT)) * 100.0 / total.total_mercado, 2) AS participacion_pct
+FROM gold.distribucion_cartera dc
+CROSS JOIN (SELECT SUM(CAST(SALDO AS BIGINT)) AS total_mercado FROM gold.distribucion_cartera WHERE ...) total
+WHERE NOMBRE_ENTIDAD IN ('Banco A', 'Banco B')
+GROUP BY year, month, NOMBRE_ENTIDAD, total.total_mercado
+UNION ALL
+-- Group aggregate as an additional row
+SELECT year, month, 'Grupo Total' AS NOMBRE_ENTIDAD, ROUND(SUM(CAST(SALDO AS BIGINT)) * 100.0 / total.total_mercado, 2) AS participacion_pct
+FROM gold.distribucion_cartera dc
+CROSS JOIN (...) total
+WHERE NOMBRE_ENTIDAD IN ('Banco A', 'Banco B')
+GROUP BY year, month, total.total_mercado
+ORDER BY year, month, NOMBRE_ENTIDAD
+```
+
+This ensures every entity (including aggregates) is a distinct value in the categorical column, which the chart needs to render separate lines/bars.
+</visualization_output_format>
+"""
+
     prompt = f"""You are an expert SQL agent for DELFOS_WH, a financial services data warehouse with data from Colombia's Superintendencia Financiera. Generate READ-ONLY SQL queries from natural language questions in Spanish or English.
 
 ## Database Schema (Star Model)
@@ -69,8 +102,7 @@ WHERE t.year = 2024
 
 ## Business Concepts → Tables
 {concept_mapping}
-{priority_hint}{temporality_hint}
-## MCP Tools Available
+{priority_hint}{temporality_hint}{viz_format_hint}## MCP Tools Available
 Use these tools to explore the database before writing SQL:
 - `list_tables` - List all tables
 - `get_table_schema(table_name)` - Get columns and types for a table

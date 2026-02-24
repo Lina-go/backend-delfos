@@ -29,6 +29,7 @@ def build_response(
         "link_power_bi": None,
         "insight": insight,
         "sql_query": None,
+        "stats_summary": None,
         "error": error,
         "needs_clarification": False,
         "clarification_question": None,

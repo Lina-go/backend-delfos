@@ -39,14 +39,26 @@ class SQLGenerator:
         schema_context: dict[str, Any] | None,
         intent: str | None,
         pattern_type: str | None,
+        sub_type: str | None = None,
+        system_prompt_override: str | None = None,
     ) -> str:
         """Generate a cache key for SQL generation."""
         normalized_msg = message.lower().strip()
-        tables = []
-        if schema_context and schema_context.get("tables"):
-            tables = sorted(schema_context["tables"])
-        cache_data = f"{normalized_msg}|{','.join(tables)}|{intent or ''}|{pattern_type or ''}"
-        return hashlib.sha256(cache_data.encode()).hexdigest()
+        tables = sorted(schema_context["tables"]) if schema_context and schema_context.get("tables") else []
+        prompt_hash = (
+            hashlib.sha256(system_prompt_override.encode()).hexdigest()[:16]
+            if system_prompt_override
+            else ""
+        )
+        parts = [
+            normalized_msg,
+            ",".join(tables),
+            intent or "",
+            pattern_type or "",
+            sub_type or "",
+            prompt_hash,
+        ]
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
     async def generate(
         self,
@@ -59,6 +71,8 @@ class SQLGenerator:
         previous_errors: list[str] | None = None,
         previous_sql: str | None = None,
         db_tools: DelfosTools | None = None,
+        system_prompt_override: str | None = None,
+        sub_type: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate SQL query from natural language.
@@ -73,6 +87,8 @@ class SQLGenerator:
             previous_errors: Optional list of validation errors from previous attempt
             previous_sql: Optional SQL query from previous attempt that failed
             db_tools: Optional DelfosTools instance for direct DB access
+            system_prompt_override: Optional pre-built system prompt (e.g. enriched by pattern hooks)
+            sub_type: Optional sub-type for cache key differentiation
 
         Returns:
             Dictionary with SQL query and metadata
@@ -83,21 +99,28 @@ class SQLGenerator:
             cache_key = None
 
             if use_cache:
-                cache_key = self._generate_cache_key(message, schema_context, intent, pattern_type)
+                cache_key = self._generate_cache_key(
+                    message, schema_context, intent, pattern_type, sub_type,
+                    system_prompt_override=system_prompt_override,
+                )
                 cached_result = SemanticCache.get(cache_key)
                 if cached_result is not None:
                     logger.info("SQL cache hit for key: %s...", cache_key[:8])
                     return cast(dict[str, Any], cached_result)
                 logger.debug("SQL cache miss for key: %s...", cache_key[:8])
 
-            prioritized_tables = None
-            if schema_context and schema_context.get("tables"):
-                prioritized_tables = schema_context["tables"]
-
-            system_prompt = build_sql_generation_system_prompt(
-                prioritized_tables=prioritized_tables,
-                temporality=temporality,
-            )
+            if system_prompt_override:
+                system_prompt = system_prompt_override
+            else:
+                prioritized_tables = (
+                    schema_context["tables"]
+                    if schema_context and schema_context.get("tables")
+                    else None
+                )
+                system_prompt = build_sql_generation_system_prompt(
+                    prioritized_tables=prioritized_tables,
+                    temporality=temporality,
+                )
 
             # Build user input
             if previous_errors and previous_sql:

@@ -16,6 +16,7 @@ from src.config.prompts.verification import (
     build_verification_user_input,
 )
 from src.config.prompts.viz import build_viz_mapping_prompt
+from src.config.prompts.unified_intent_viz import build_unified_intent_viz_prompt
 from src.config.prompts.labels import build_suggest_labels_system_prompt
 
 __all__ = [
@@ -32,5 +33,6 @@ __all__ = [
     "build_triage_system_prompt",
     "build_verification_system_prompt",
     "build_verification_user_input",
+    "build_unified_intent_viz_prompt",
     "build_viz_mapping_prompt",
 ]

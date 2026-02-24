@@ -6,7 +6,7 @@ from src.services.sql.validation import SQLValidationService
 def test_sql_validator_safe_query():
     """Test SQL validation service with safe query."""
     validator = SQLValidationService()
-    result = validator.validate("SELECT * FROM dbo.Distribucion_Cartera")
+    result = validator.validate("SELECT * FROM gold.distribucion_cartera")
     assert result["is_valid"]
 
 
@@ -21,6 +21,6 @@ def test_sql_validator_dangerous_query():
 def test_sql_validator_no_select():
     """Test SQL validation service with query without SELECT."""
     validator = SQLValidationService()
-    result = validator.validate("UPDATE dbo.Distribucion_Cartera SET name='test'")
+    result = validator.validate("UPDATE gold.distribucion_cartera SET name='test'")
     assert not result["is_valid"]
     assert "Blocked keyword" in str(result["errors"])

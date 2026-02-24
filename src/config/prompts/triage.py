@@ -62,6 +62,10 @@ en el contexto completo de la conversacion.
    - Pide filtrar, comparar o explicar datos anteriores.
    - Pregunta "por que?" o pide explicacion sobre resultados previos.
    - Ejemplos: "Cual fue el de Davivienda?", "Y en octubre?", "Por que?", "El mayor", "What about Bancolombia?"
+   - **IMPORTANTE**: Solo clasifica como follow_up si la respuesta puede derivarse DIRECTAMENTE
+     de las columnas existentes en el contexto. Si la pregunta introduce una metrica o dimension
+     NUEVA que NO aparece en las columnas del contexto, clasifica como data_question.
+     Ejemplo: contexto tiene [label, tasa, desembolsos] y pregunta pide "cartera" → data_question (cartera NO esta en contexto).
 
 5. **{QueryType.VIZ_REQUEST.value}**: Solicita visualizar o cambiar tipo de grafica (SOLO cuando hay datos previos).
    - Pide graficar datos existentes o cambiar visualizacion.
@@ -95,9 +99,10 @@ Existe conversacion previa con datos: **{"Si" if has_context else "NO"}**
 2. **{QueryType.DATA_QUESTION.value}**: Pide informacion, metricas o comparaciones que requieren NUEVA consulta a la base de datos.
    - Involucra metricas financieras (saldos, tasas, carteras, mora).
    - Compara entidades, periodos, productos.
+   - Pregunta por relacion, correlacion o asociacion entre dos metricas financieras.
    - Requiere datos que NO estan en el contexto previo.
    - Tablas disponibles: {tables_list}.
-   - Ejemplos: "Cual es la tasa de mora?", "Compara bancos por saldo", "Show me rates for 2024".
+   - Ejemplos: "Cual es la tasa de mora?", "Compara bancos por saldo", "Show me rates for 2024", "Como se relaciona la tasa con los desembolsos?".
 
 3. **{QueryType.GENERAL.value}**: Preguntas sobre conceptos financieros, capacidades del sistema, o conversacion general.
    - Definiciones o explicaciones de terminos financieros.

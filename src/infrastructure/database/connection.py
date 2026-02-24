@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import struct
 import threading
 import time
@@ -11,12 +12,50 @@ from queue import Empty, Queue
 from typing import Any, cast
 
 import pyodbc
-from azure.identity import DefaultAzureCredential
+from azure.identity import ClientSecretCredential, DefaultAzureCredential
 
 from src.config.settings import Settings
-from src.utils.retry import is_pyodbc_timeout_error, run_with_retry
+from src.utils.retry import is_transient_pyodbc_error, run_with_retry
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shared sync credential singleton — reused by both DB and WH pools so the
+# token is fetched only once.
+# ---------------------------------------------------------------------------
+_shared_sync_credential: DefaultAzureCredential | ClientSecretCredential | None = None
+_credential_lock = threading.Lock()
+
+
+def get_shared_sync_credential(settings: Settings) -> DefaultAzureCredential | ClientSecretCredential:
+    """Return a shared sync credential, creating it on first call."""
+    global _shared_sync_credential
+    if _shared_sync_credential is not None:
+        return _shared_sync_credential
+    with _credential_lock:
+        if _shared_sync_credential is not None:
+            return _shared_sync_credential
+        if settings.use_service_principal:
+            logger.info("DB credential: Service Principal (ClientSecretCredential)")
+            _shared_sync_credential = ClientSecretCredential(
+                tenant_id=settings.azure_tenant_id,
+                client_id=settings.azure_client_id,
+                client_secret=settings.azure_client_secret,
+            )
+        else:
+            logger.info("DB credential: DefaultAzureCredential (Managed Identity)")
+            _shared_sync_credential = DefaultAzureCredential()
+        return _shared_sync_credential
+
+
+def close_shared_sync_credential() -> None:
+    """Close and discard the shared sync credential."""
+    global _shared_sync_credential
+    with _credential_lock:
+        if _shared_sync_credential is not None:
+            with suppress(Exception):
+                _shared_sync_credential.close()
+            _shared_sync_credential = None
 
 
 class FabricConnectionFactory:
@@ -233,8 +272,11 @@ class ConnectionPool:
                 if cls._db_instance is None:
                     if not settings.db_server or not settings.db_database:
                         raise ValueError("db_server and db_database are required")
-                    factory = FabricConnectionFactory(settings.db_server, settings.db_database)
-                    cls._db_instance = ConnectionPool(factory, min_size=0, max_size=10)
+                    credential = get_shared_sync_credential(settings)
+                    factory = FabricConnectionFactory(
+                        settings.db_server, settings.db_database, credential=credential,
+                    )
+                    cls._db_instance = ConnectionPool(factory, min_size=1, max_size=10)
         return cls._db_instance
 
     @classmethod
@@ -245,8 +287,11 @@ class ConnectionPool:
                 if cls._wh_instance is None:
                     if not settings.wh_server or not settings.wh_database:
                         raise ValueError("wh_server and wh_database are required")
-                    factory = FabricConnectionFactory(settings.wh_server, settings.wh_database)
-                    cls._wh_instance = ConnectionPool(factory, min_size=0, max_size=10)
+                    credential = get_shared_sync_credential(settings)
+                    factory = FabricConnectionFactory(
+                        settings.wh_server, settings.wh_database, credential=credential,
+                    )
+                    cls._wh_instance = ConnectionPool(factory, min_size=1, max_size=10)
         return cls._wh_instance
 
     @classmethod
@@ -289,6 +334,8 @@ async def execute_query(
                 else:
                     cursor.execute(sql)
 
+                if cursor.description is None:
+                    return []
                 columns = [column[0] for column in cursor.description]
                 rows = cursor.fetchall()
 
@@ -304,6 +351,59 @@ async def execute_query(
         await run_with_retry(
             _execute_with_retry,
             max_retries=5,
+            initial_delay=2.0,
+            backoff_factor=1.5,
+            retry_on_rate_limit=True,
+        ),
+    )
+
+
+def adapt_sql_for_wh(sql: str, target_schema: str = "gold") -> str:
+    """Replace dbo schema references with the warehouse schema.
+
+    Handles both bracketed ([dbo].) and unbracketed (dbo.) variants,
+    using case-insensitive matching.
+    """
+    sql = re.sub(r"\[dbo\]\.", f"[{target_schema}].", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bdbo\.", f"[{target_schema}].", sql, flags=re.IGNORECASE)
+    return sql
+
+
+async def execute_wh_query(
+    settings: Settings, sql: str, params: tuple[Any, ...] | None = None
+) -> list[dict[str, Any]]:
+    """Execute a SELECT query against the Warehouse (gold schema).
+
+    Same interface as ``execute_query`` but uses the WH connection pool.
+    Schema references are automatically adapted (dbo -> wh_schema).
+    """
+    sql = adapt_sql_for_wh(sql, target_schema=settings.wh_schema)
+    pool = ConnectionPool.get_wh_pool(settings)
+
+    def _execute() -> list[dict[str, Any]]:
+        with pool.connection() as conn:
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                if cursor.description is None:
+                    return []
+                columns = [column[0] for column in cursor.description]
+                rows = cursor.fetchall()
+                return [{col_name: row[i] for i, col_name in enumerate(columns)} for row in rows]
+            finally:
+                cursor.close()
+
+    async def _execute_with_retry() -> list[dict[str, Any]]:
+        return await asyncio.to_thread(_execute)
+
+    return cast(
+        list[dict[str, Any]],
+        await run_with_retry(
+            _execute_with_retry,
+            max_retries=3,
             initial_delay=2.0,
             backoff_factor=1.5,
             retry_on_rate_limit=True,
@@ -350,7 +450,7 @@ async def execute_insert(
             except Exception as e:
                 logger.error("Database insert/update error: %s", e)
                 conn.rollback()
-                if is_pyodbc_timeout_error(e):
+                if is_transient_pyodbc_error(e):
                     raise
                 return {
                     "success": False,

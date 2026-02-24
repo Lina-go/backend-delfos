@@ -60,10 +60,16 @@ class SubType(str, Enum):
     """Concentration changing over time.
     Signals: 'evolucion de la concentracion', 'concentracion por mes'."""
 
-    # -- Blocked (not yet supported) ----------------------------------------
+    # -- Relationship --------------------------------------------------------
     RELACION = "relacion"
-    """Correlation between two variables (would need scatter)."""
+    """Correlation between two variables for the same subjects (scatter plot).
+    Signals: 'relacion entre X e Y', 'correlacion', 'vs', 'comparar X con Y' (2 metrics)."""
 
+    COVARIACION = "covariacion"
+    """Temporal evolution of the relationship between two variables.
+    Signals: 'evolucion de la relacion', 'historico de correlacion'."""
+
+    # -- Blocked (not yet supported) ----------------------------------------
     SENSIBILIDAD = "sensibilidad"
     """Sensitivity/elasticity analysis."""
 
@@ -85,7 +91,6 @@ class SubType(str, Enum):
 # -------------------------------------------------------------------------
 
 BLOCKED_SUBTYPES: frozenset[SubType] = frozenset({
-    SubType.RELACION,
     SubType.SENSIBILIDAD,
     SubType.DESCOMPOSICION_CAMBIO,
     SubType.WHAT_IF,
@@ -104,6 +109,8 @@ _SUBTYPE_CHART_MAP: dict[SubType, ChartType | None] = {
     SubType.TENDENCIA_COMPARADA:      ChartType.LINE,
     SubType.EVOLUCION_COMPOSICION:    ChartType.STACKED_BAR,
     SubType.EVOLUCION_CONCENTRACION:  ChartType.STACKED_BAR,
+    SubType.RELACION:                 ChartType.SCATTER,
+    SubType.COVARIACION:              ChartType.SCATTER,
 }
 
 VIZ_SUBTYPES: frozenset[SubType] = frozenset(
@@ -158,6 +165,7 @@ _SUBTYPE_TO_LEGACY_ARCHETYPE: dict[SubType, str] = {
     SubType.EVOLUCION_COMPOSICION:    "B",
     SubType.EVOLUCION_CONCENTRACION:  "E",
     SubType.RELACION:                 "F",
+    SubType.COVARIACION:              "F",
     SubType.SENSIBILIDAD:             "G",
     SubType.DESCOMPOSICION_CAMBIO:    "H",
     SubType.WHAT_IF:                  "I",
@@ -180,10 +188,12 @@ TEMPORAL_SUBTYPES: frozenset[SubType] = frozenset({
     SubType.TENDENCIA_COMPARADA,
     SubType.EVOLUCION_COMPOSICION,
     SubType.EVOLUCION_CONCENTRACION,
+    SubType.COVARIACION,
 })
 
 _SUBTYPE_TO_PATTERN: dict[SubType, str] = {
     SubType.RELACION:              "Relacion",
+    SubType.COVARIACION:           "Relacion",
     SubType.SENSIBILIDAD:          "Relacion",
     SubType.DESCOMPOSICION_CAMBIO: "Proyeccion",
     SubType.WHAT_IF:               "Proyeccion",

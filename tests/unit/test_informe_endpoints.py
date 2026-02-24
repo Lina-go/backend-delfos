@@ -85,6 +85,7 @@ def test_get_informe_detail(mock_query, client):
     mock_query.side_effect = [
         [{"id": "inf-1", "title": "Junta Directiva", "description": "", "owner": "Andres Leon", "created_at": None}],
         [{"item_id": "item-1", "graph_id": "g-1", "type": "PIE", "content": '{"data_points": []}', "title": "Market Share", "query": "SELECT 1", "created_at": None}],
+        [],  # labels query
     ]
     response = client.get("/api/informes/inf-1")
     assert response.status_code == 200
@@ -110,7 +111,7 @@ def test_delete_informe_success(mock_insert, client):
     response = client.delete("/api/informes/inf-1")
     assert response.status_code == 200
     assert response.json()["id"] == "inf-1"
-    assert mock_insert.call_count == 2
+    assert mock_insert.call_count == 3  # items + labels + project
 
 
 @patch("src.services.informes.service.execute_insert", new_callable=AsyncMock)

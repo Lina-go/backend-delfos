@@ -59,6 +59,12 @@ def build_intent_hierarchical_prompt() -> str:
         "- 'Como ha evolucionado la concentracion de mercado en las principales entidades'\n"
         "- Key: concentration (top-N share) tracked over time -> CHART: STACKED_BAR\n\n"
 
+        "**covariacion** -- Temporal evolution of the relationship between TWO metrics.\n"
+        "- 'Como ha evolucionado la relacion entre tasa activa y saldo de cartera?'\n"
+        "- 'Historico de la correlacion entre desembolsos y tasas de credito'\n"
+        "- Key: 2 DIFFERENT numeric metrics tracked over time, focus on how their RELATIONSHIP evolves -> CHART: SCATTER\n"
+        "- DISAMBIGUATION vs tendencia_comparada: tendencia = how values evolve. covariacion = how the RELATIONSHIP between 2 metrics evolves.\n\n"
+
         "## Step 2b -- Static sub-types\n\n"
 
         "If the question is NOT temporal, pick ONE:\n\n"
@@ -99,10 +105,20 @@ def build_intent_hierarchical_prompt() -> str:
         "- 'Como se compara la composicion por plazos de depositos de los 10 principales bancos?'\n"
         "- Key: composition breakdown FOR EACH of multiple entities -> CHART: STACKED_BAR\n\n"
 
-        "## Step 2c -- Blocked sub-types (respond that it's not supported)\n\n"
+        "**relacion** -- Relationship/correlation between TWO different numeric metrics for the same subjects.\n"
+        "- 'Como se compara la participacion en depositos con la participacion en creditos de los cinco principales bancos?'\n"
+        "- 'Muestre la participacion en desembolsos comparada con la participacion en saldos de cartera para cada banco'\n"
+        "- 'Compare la tasa activa promedio con la participacion en desembolsos de credito'\n"
+        "- 'Hay relacion entre tasa y volumen de creditos?'\n"
+        "- 'A mayor tasa, menor saldo de cartera?'\n"
+        "- Key signals: TWO different numeric metrics connected by 'con', 'vs', 'versus', 'y', 'comparada con' -> CHART: SCATTER\n"
+        "- CRITICAL DISAMBIGUATION vs comparacion_directa:\n"
+        "  - comparacion_directa = 1 METRIC across multiple GROUPS -> 'Compara el saldo entre bancos' (1 metrica: saldo)\n"
+        "  - relacion = 2 DIFFERENT METRICS for the same subjects -> 'Compara el saldo CON la tasa de los bancos' (2 metricas: saldo + tasa)\n"
+        "  - If the question mentions TWO DIFFERENT numeric metrics being compared -> relacion\n"
+        "  - If the question mentions ONE metric compared across groups/entities -> comparacion_directa\n\n"
 
-        "**relacion** -- Correlation/relationship between two variables.\n"
-        "- 'Como se relaciona X con Y?' -> NOT SUPPORTED\n\n"
+        "## Step 2c -- Blocked sub-types (respond that it's not supported)\n\n"
 
         "**sensibilidad** -- Sensitivity/elasticity analysis.\n"
         "- 'Que tan sensible es X ante cambios en Y?' -> NOT SUPPORTED\n\n"
@@ -140,6 +156,12 @@ def build_intent_hierarchical_prompt() -> str:
         "5. **Interest rate detection**:\n"
         "   - Tasas de interes, captacion, CDT, CDAT, tasa EA, tasa nominal, DTF, IBR -> is_tasa = true\n\n"
 
+        "6. **comparacion_directa vs relacion** (CRITICAL):\n"
+        "   - 1 metric, multiple groups = comparacion_directa: 'Compara el saldo entre bancos'\n"
+        "   - 2 different metrics, same subjects = relacion: 'Compara saldo CON tasa de los bancos'\n"
+        "   - Words 'con', 'vs', 'versus' connecting TWO DIFFERENT metrics = relacion\n"
+        "   - 'participacion en X comparada con participacion en Y' = relacion (2 different participaciones)\n\n"
+
         "# YOUR TASK\n\n"
 
         "Analyze the question in <classification_reasoning> tags, then output JSON:\n\n"
@@ -166,7 +188,7 @@ def build_intent_hierarchical_prompt() -> str:
         "- **sub_type**: Must be exactly one of: valor_puntual, comparacion_directa, ranking, "
         "concentracion, composicion_simple, composicion_comparada, tendencia_simple, "
         "tendencia_comparada, evolucion_composicion, evolucion_concentracion, relacion, "
-        "sensibilidad, descomposicion_cambio, what_if, capacidad, requerimiento.\n"
+        "covariacion, sensibilidad, descomposicion_cambio, what_if, capacidad, requerimiento.\n"
         "- **titulo_grafica**: Short, descriptive chart title. null for valor_puntual.\n"
         "- **is_tasa**: true if about interest rates, false otherwise.\n\n"
 

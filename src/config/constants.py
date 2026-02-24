@@ -60,6 +60,7 @@ class ChartType(str, Enum):
     BAR = "bar"
     LINE = "line"
     STACKED_BAR = "stackedbar"
+    SCATTER = "scatter"
 
 
 class ColumnType(str, Enum):

@@ -45,14 +45,14 @@ class TestSubTypeEnum:
     def test_parse_empty_returns_none(self):
         assert get_subtype_from_string("") is None
 
-    def test_total_subtypes_is_16(self):
-        assert len(SubType) == 16
+    def test_total_subtypes_is_17(self):
+        assert len(SubType) == 17
 
-    def test_blocked_count_is_6(self):
-        assert len(BLOCKED_SUBTYPES) == 6
+    def test_blocked_count_is_5(self):
+        assert len(BLOCKED_SUBTYPES) == 5
 
-    def test_viz_count_is_9(self):
-        assert len(VIZ_SUBTYPES) == 9
+    def test_viz_count_is_11(self):
+        assert len(VIZ_SUBTYPES) == 11
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +76,8 @@ class TestChartResolution:
             (SubType.TENDENCIA_COMPARADA, ChartType.LINE),
             (SubType.EVOLUCION_COMPOSICION, ChartType.STACKED_BAR),
             (SubType.EVOLUCION_CONCENTRACION, ChartType.STACKED_BAR),
+            (SubType.RELACION, ChartType.SCATTER),
+            (SubType.COVARIACION, ChartType.SCATTER),
         ],
     )
     def test_active_subtype_chart(self, sub_type: SubType, expected_chart: ChartType | None):
@@ -84,7 +86,6 @@ class TestChartResolution:
     @pytest.mark.parametrize(
         "sub_type",
         [
-            SubType.RELACION,
             SubType.SENSIBILIDAD,
             SubType.DESCOMPOSICION_CAMBIO,
             SubType.WHAT_IF,
@@ -263,8 +264,8 @@ _GROUND_TRUTH = [
     ("Evolución del saldo total y por tipo de depósito del Grupo Aval", "evolucion_composicion", ChartType.STACKED_BAR),
     # evolucion_concentracion (STACKED_BAR)
     ("Cómo ha evolucionado la concentración de mercado en las principales entidades?", "evolucion_concentracion", ChartType.STACKED_BAR),
-    # Blocked subtypes
-    ("Cómo se relaciona el saldo con la tasa de interés?", "relacion", None),
+    # Scatter subtypes
+    ("Cómo se relaciona el saldo con la tasa de interés?", "relacion", ChartType.SCATTER),
     ("Qué tan sensible es la cartera ante cambios en la tasa?", "sensibilidad", None),
     ("Qué parte del crecimiento se explica por consumo vs hipotecario?", "descomposicion_cambio", None),
     ("Si las tasas suben 2%, cuál sería el impacto en la cartera?", "what_if", None),
