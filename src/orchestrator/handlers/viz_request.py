@@ -1,4 +1,4 @@
-"""Viz request handler - returns data points for frontend charting."""
+"""Visualization request handler."""
 
 import logging
 from typing import Any
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class VizRequestHandler:
-    """Handles visualization requests using existing data."""
+    """Handles chart re-generation using existing query data."""
 
     CHART_KEYWORDS: dict[ChartType, list[str]] = {
         ChartType.PIE: ["pie", "pastel", "torta", "circular"],
@@ -27,7 +27,7 @@ class VizRequestHandler:
     async def handle(
         self, message: str, user_id: str, context: ConversationContext
     ) -> dict[str, Any]:
-        """Handle visualization request using existing data."""
+        """Regenerate a chart from previous query data."""
         if not context.last_results:
             return self._no_data_response()
 
@@ -62,7 +62,7 @@ class VizRequestHandler:
         )
 
     def _detect_chart_type(self, message: str) -> ChartType | None:
-        """Detect chart type from message keywords."""
+        """Detect chart type from keyword matching."""
         msg_lower = message.lower()
 
         for chart_type, keywords in self.CHART_KEYWORDS.items():
@@ -72,7 +72,7 @@ class VizRequestHandler:
         return None
 
     def _no_data_response(self) -> dict[str, Any]:
-        """Return response when there's no data to visualize."""
+        """Build response when no data is available."""
         return build_response(
             patron=QueryType.VIZ_REQUEST,
             arquetipo="NA",
@@ -80,7 +80,7 @@ class VizRequestHandler:
         )
 
     def _error_response(self, error: str) -> dict[str, Any]:
-        """Return response when visualization fails."""
+        """Build error response for failed visualization."""
         return build_response(
             patron=QueryType.VIZ_REQUEST,
             arquetipo="NA",

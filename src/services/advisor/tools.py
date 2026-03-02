@@ -1,4 +1,4 @@
-"""Advisor agent tools that wrap DelfosTools for warehouse access."""
+"""Advisor agent tools."""
 
 import re
 import statistics
@@ -35,11 +35,7 @@ def _cache_set(key: str, value: str) -> str:
 
 
 def _validate_advisor_param(value: str, param_name: str, max_length: int = 20) -> str:
-    """Valida un parámetro que se interpolará en SQL.
-
-    Solo permite caracteres alfanuméricos, espacios, guiones, puntos y tildes.
-    Rechaza cualquier palabra reservada SQL peligrosa.
-    """
+    """Validate a parameter for safe SQL interpolation."""
     value = value.strip()
     if len(value) > max_length:
         raise ValueError(f"{param_name} excede longitud máxima {max_length}")

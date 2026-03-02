@@ -1,6 +1,4 @@
-"""
-SQL validation rules and security checks for Azure SQL Database.
-"""
+"""SQL validation rules and security checks for Azure SQL Database."""
 
 import re
 
@@ -83,14 +81,7 @@ ALLOWED_STATEMENT_NAMES = ", ".join(sorted(ALLOWED_STATEMENT_PREFIXES))  # For e
 
 
 def is_sql_safe(sql: str) -> tuple[bool, str | None]:
-    """
-    Security validation for SQL query.
-
-    This is the PRIMARY validation that MUST pass before execution.
-
-    Returns:
-        Tuple of (is_safe, error_message)
-    """
+    """Validate SQL query for security, returning (is_safe, error_message)."""
     if not sql or not sql.strip():
         return False, "SQL query is empty"
 
@@ -137,19 +128,7 @@ def is_sql_safe(sql: str) -> tuple[bool, str | None]:
 
 
 def validate_table_references(sql: str, valid_tables: set[str]) -> list[str]:
-    """
-    Validate table references against a set of valid tables.
-
-    Note: This is OPTIONAL. The database will also validate this.
-    Use for early feedback before hitting the DB.
-
-    Args:
-        sql: SQL query string
-        valid_tables: Set of valid table names (e.g., {"gold.tasas_interes_captacion", "gold.distribucion_cartera"})
-
-    Returns:
-        List of error messages (empty if valid)
-    """
+    """Validate table references against a set of valid tables."""
     errors = []
     table_names = extract_table_names(sql)
 
@@ -187,16 +166,7 @@ def extract_table_names(sql: str) -> list[str]:
 
 
 def validate_sql_query(sql: str, valid_tables: set[str] | None = None) -> tuple[bool, list[str]]:
-    """
-    Validate SQL query for security and optionally schema.
-
-    Args:
-        sql: SQL query string
-        valid_tables: Optional set of valid table names for schema validation
-
-    Returns:
-        Tuple of (is_valid, list_of_errors)
-    """
+    """Validate SQL query for security and optionally schema, returning (is_valid, errors)."""
     errors = []
 
     # 1. Security validation (REQUIRED)

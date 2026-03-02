@@ -1,11 +1,4 @@
-"""Shared LLM helper for handler modules.
-
-Lazy imports are used throughout to avoid circular dependencies between
-the orchestrator and infrastructure layers.
-
-Supports both Azure AI (OpenAI models) and Anthropic (Claude models).
-Model routing is automatic based on the model name.
-"""
+"""Shared LLM helper for handler modules."""
 
 from typing import Any, NamedTuple
 
@@ -13,7 +6,7 @@ from src.config.settings import Settings
 
 
 class _LLMDeps(NamedTuple):
-    """Lazily-resolved LLM factory and executor functions."""
+    """Lazily-resolved LLM factory and executor references."""
 
     azure_agent_client: Any
     create_claude_agent: Any
@@ -24,7 +17,7 @@ class _LLMDeps(NamedTuple):
 
 
 def _lazy_imports() -> _LLMDeps:
-    """Return LLM factory and executor functions."""
+    """Return lazily-imported LLM dependencies."""
     from src.infrastructure.llm.executor import run_agent_with_format, run_single_agent
     from src.infrastructure.llm.factory import (
         azure_agent_client,
@@ -57,11 +50,7 @@ async def _run_with_model(
     temperature: float,
     response_format: type | None = None,
 ) -> Any:
-    """Shared implementation for both plain-text and formatted agent runs.
-
-    *executor* is the function to call once the agent is created -- either
-    ``run_single_agent`` or ``run_agent_with_format``.
-    """
+    """Run an agent with the given executor (plain-text or formatted)."""
     agent_model = model or settings.triage_agent_model
 
     executor_kwargs: dict[str, Any] = {}
@@ -111,7 +100,7 @@ async def run_handler_agent(
     max_tokens: int = 1024,
     temperature: float = 0.7,
 ) -> str:
-    """Run an agent and return its plain-text response."""
+    """Run an agent and return its plain-text output."""
     llm = _lazy_imports()
     return await _run_with_model(
         llm=llm,
@@ -141,7 +130,7 @@ async def run_formatted_handler_agent(
     max_tokens: int = 1024,
     temperature: float = 0.7,
 ) -> Any:
-    """Run an agent and return its response parsed into *response_format*."""
+    """Run an agent and return its response parsed into ``response_format``."""
     llm = _lazy_imports()
     return await _run_with_model(
         llm=llm,

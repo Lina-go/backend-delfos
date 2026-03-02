@@ -1,4 +1,4 @@
-"""Response formatter service with LLM or code-based formatting."""
+"""Response formatter service."""
 
 import logging
 from typing import Any
@@ -17,22 +17,11 @@ class ResponseFormatter:
     """Formats final response using LLM or code-based formatting."""
 
     def __init__(self, settings: Settings):
-        """Initialize response formatter."""
         self.settings = settings
         self.code_formatter = CodeFormatter()
 
     async def format(self, state: PipelineState) -> dict[str, Any]:
-        """
-        Format final response from pipeline state.
-
-        Uses LLM formatting if `use_llm_formatting=True`, otherwise uses code-based formatting.
-
-        Args:
-            state: Pipeline state object
-
-        Returns:
-            Formatted response dictionary
-        """
+        """Format final response from pipeline state."""
         if self.settings.use_llm_formatting:
             return await self._format_with_llm(state)
         else:

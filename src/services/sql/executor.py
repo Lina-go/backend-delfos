@@ -78,12 +78,7 @@ class RowParser:
 
     @staticmethod
     def parse(raw_results: str) -> list[tuple[Any, ...]]:
-        """
-        Parse raw SQL result rows into Python tuples.
-
-        Supports common SQL types: Decimal, datetime.date, datetime.datetime,
-        datetime.time, and basic Python literals.
-        """
+        """Parse raw SQL result rows into Python tuples."""
         if not raw_results:
             return []
 
@@ -103,14 +98,7 @@ class RowParser:
 
     @staticmethod
     def _parse_line(line: str) -> Any:
-        """
-        Parse a single line, returning normalized values.
-
-        Uses restricted eval with:
-        1. Input validation - only allows safe characters
-        2. No builtins - prevents dangerous function calls
-        3. Limited namespace - only Decimal, datetime, None, True, False
-        """
+        """Parse a single line into normalized Python values."""
         # Validate input contains only expected characters
         if not _SAFE_INPUT_PATTERN.match(line):
             logger.warning("Row contains unexpected characters, skipping eval: '%s...'", line[:100])
@@ -331,12 +319,7 @@ class SQLExecutor:
         sql: str,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
-        """Execute SQL query and return formatted results.
-
-        Args:
-            sql: SQL query to execute
-            db_tools: DelfosTools instance for direct DB access
-        """
+        """Execute SQL query and return formatted results."""
         try:
             if db_tools is None:
                 return SQLExecutionResult.error("No database tools available").to_dict()

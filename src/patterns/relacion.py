@@ -1,7 +1,4 @@
-"""Relacion pattern hooks -- scatter plot with correlation analysis.
-
-Registers hooks for sub_types: relacion, covariacion.
-"""
+"""Relacion pattern hooks."""
 
 from __future__ import annotations
 

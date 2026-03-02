@@ -1,4 +1,4 @@
-"""Conversation context management for Delfos NL2SQL Pipeline."""
+"""Conversation context management."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -7,7 +7,7 @@ from typing import Any
 
 @dataclass
 class MessageTurn:
-    """A single turn in the conversation history."""
+    """Single turn in the conversation history."""
 
     role: str  # "user" | "assistant"
     content: str
@@ -23,7 +23,7 @@ class MessageTurn:
 
 @dataclass
 class ConversationContext:
-    """Stores context from the last query for follow-ups and viz requests."""
+    """Context from the last query for follow-ups and viz requests."""
 
     # Core fields
     last_query: str | None = None
@@ -45,11 +45,7 @@ class ConversationContext:
     message_history: list[MessageTurn] = field(default_factory=list)
 
     def get_history_summary(self, max_turns: int = 10) -> str:
-        """Generate a formatted summary of recent conversation history for LLM prompts.
-
-        Returns:
-            Formatted conversation history string, or empty string if no history.
-        """
+        """Format recent conversation history for LLM prompts."""
         if not self.message_history:
             return ""
 
@@ -70,15 +66,7 @@ class ConversationContext:
         return "\n".join(lines)
 
     def get_summary(self) -> str:
-        """
-        Generate a generic summary of the context for Triage.
-
-        This summary helps the Triage LLM understand what data is available
-        so it can decide if a question is a follow-up or requires new data.
-
-        Returns:
-            A formatted string summarizing available data, or empty string if no data.
-        """
+        """Generate a context summary for the Triage LLM."""
         if not self.last_results:
             return ""
 
@@ -122,7 +110,7 @@ class ConversationContext:
 
 
 class ConversationStore:
-    """In-memory store for conversation contexts by user_id."""
+    """In-memory store for conversation contexts keyed by user_id."""
 
     _MAX_CONTEXT_ROWS = 100
 
@@ -185,10 +173,7 @@ class ConversationStore:
         tables_used: list[str] | None = None,
         max_history_turns: int = 10,
     ) -> None:
-        """Add a conversation turn to the user's message history.
-
-        Maintains a sliding window of max_history_turns * 2 messages.
-        """
+        """Add a conversation turn, maintaining a sliding window."""
         ctx = cls.get(user_id)
         turn = MessageTurn(
             role=role,

@@ -17,12 +17,14 @@ from src.config.prompts.verification import (
 )
 from src.config.prompts.viz import build_viz_mapping_prompt
 from src.config.prompts.unified_intent_viz import build_unified_intent_viz_prompt
+from src.config.prompts.bullets import build_graph_bullet_system_prompt
 from src.config.prompts.labels import build_suggest_labels_system_prompt
 
 __all__ = [
     "FOLLOW_UP_PROMPT_TEMPLATE",
     "GENERAL_HANDLER_PROMPT",
     "build_format_prompt",
+    "build_graph_bullet_system_prompt",
     "build_intent_hierarchical_prompt",
     "build_intent_system_prompt",
     "build_sql_execution_system_prompt",

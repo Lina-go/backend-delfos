@@ -1,4 +1,4 @@
-"""Route non-data queries to specialised handlers."""
+"""Route non-data queries to specialized handlers."""
 
 import logging
 from typing import Any
@@ -18,12 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class HandlerRouter:
-    """Dispatch a triaged query to the appropriate lightweight handler.
-
-    Returns a response dict for non-data query types (greeting, follow_up,
-    viz_request, general, out_of_scope) and ``None`` when the query is a
-    ``data_question`` that should proceed through the full pipeline.
-    """
+    """Dispatch a triaged query to the appropriate handler."""
 
     def __init__(
         self,

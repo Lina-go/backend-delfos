@@ -1,14 +1,30 @@
-"""Chat V2 models — unified classification + viz mapping result."""
+"""Chat V2 models."""
+
+from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
 
-class UnifiedClassification(BaseModel):
-    """Combined intent classification + visualization column mapping.
+class IndicatorSpec(BaseModel):
+    """Spec for a KPI indicator — LLM decides label/calc/unit, Python computes."""
 
-    Returned by a single LLM call that does both tasks at once,
-    eliminating one API round-trip compared to separate calls.
-    """
+    label: str = Field(description="Indicator label in Spanish")
+    calc: str = Field(
+        description="Arithmetic operation: period_delta, pct_change, "
+        "prev_delta, momentum, "
+        "max_change, rank_change, share_of_growth, growth_vs_market",
+    )
+    unit: str = Field(
+        description="Unit: pp (participation), bps (rates), % (balance growth), abs (amounts)",
+    )
+    series: str | None = Field(
+        default=None,
+        description="Specific series name, or null for the main/only series",
+    )
+
+
+class UnifiedClassification(BaseModel):
+    """Combined intent classification and visualization column mapping."""
 
     # --- Intent classification fields ---
     sub_type: str = Field(
@@ -49,6 +65,12 @@ class UnifiedClassification(BaseModel):
     y_axis_name: str | None = Field(default=None, description="Y axis label in Spanish")
     series_name: str | None = Field(default=None, description="Series label in Spanish")
     category_name: str | None = Field(default=None, description="Category label in Spanish")
+
+    # --- Indicator selection (LLM decides what to show, Python computes) ---
+    indicators: list[IndicatorSpec] = Field(
+        default_factory=list,
+        description="KPI indicators for the chart (as many as relevant). Empty for valor_puntual, scatter, stacked_bar.",
+    )
 
     @field_validator("sub_type", mode="before")
     @classmethod

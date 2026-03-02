@@ -1,6 +1,4 @@
-"""
-SQL generation agent system prompts.
-"""
+"""SQL generation agent system prompts."""
 
 from src.config.database import CONCEPT_TO_TABLES, DATABASE_TABLES, get_all_table_names
 
@@ -238,15 +236,7 @@ def build_sql_retry_user_input(
     verification_issues: list[str],
     verification_suggestion: str | None,
 ) -> str:
-    """
-    Build user input for SQL generation retry after verification failure.
-
-    Args:
-        original_question: The user's original question
-        previous_sql: The SQL that failed verification
-        verification_issues: List of issues from verification
-        verification_suggestion: Suggestion for fixing the SQL
-    """
+    """Build user input for SQL generation retry after verification failure."""
 
     issues_text = "\n".join([f"- {issue}" for issue in verification_issues])
     suggestion_text = verification_suggestion or "No specific suggestion provided"
@@ -280,22 +270,15 @@ def build_sql_retry_user_input(
 
 
 def build_sql_execution_system_prompt() -> str:
-    """
-    Build system prompt for SQL execution agent.
+    """Build system prompt for SQL execution agent.
 
-    DEPRECATED: This prompt is kept for backwards compatibility but should not be used.
-    Use build_sql_formatting_system_prompt() instead, which formats results without executing queries.
+    Deprecated: Use build_sql_formatting_system_prompt() instead.
     """
     return build_sql_formatting_system_prompt()
 
 
 def build_sql_formatting_system_prompt() -> str:
-    """
-    Build system prompt for SQL result formatting agent.
-
-    This agent formats raw SQL results (already executed) as dictionaries.
-    It does NOT execute queries - it only formats the provided results.
-    """
+    """Build system prompt for SQL result formatting agent."""
     prompt = (
         "You are a SQL result formatter. Your task is to convert raw SQL query results into structured JSON format. "
         ""

@@ -1,4 +1,4 @@
-"""Database connection utilities with connection pooling for Microsoft Fabric."""
+"""Connection pooling for Microsoft Fabric databases."""
 
 import asyncio
 import logging
@@ -28,7 +28,7 @@ _credential_lock = threading.Lock()
 
 
 def get_shared_sync_credential(settings: Settings) -> DefaultAzureCredential | ClientSecretCredential:
-    """Return a shared sync credential, creating it on first call."""
+    """Return the shared sync credential singleton, creating it on first call."""
     global _shared_sync_credential
     if _shared_sync_credential is not None:
         return _shared_sync_credential
@@ -59,12 +59,7 @@ def close_shared_sync_credential() -> None:
 
 
 class FabricConnectionFactory:
-    """
-    Factory for Microsoft Fabric connections via Managed Identity.
-
-    Handles token acquisition and automatic refresh (tokens expire ~1 hour).
-    Thread-safe.
-    """
+    """Thread-safe factory for token-authenticated Microsoft Fabric connections."""
 
     TOKEN_SCOPE = "https://database.windows.net/.default"
     TOKEN_REFRESH_MARGIN = 300  # refresh 5 minutes before expiry
@@ -85,7 +80,7 @@ class FabricConnectionFactory:
         self._token_lock = threading.Lock()
 
     def _get_token_struct(self) -> bytes:
-        """Get a valid token struct, refreshing if needed."""
+        """Return a valid ODBC token struct, refreshing if expired."""
         with self._token_lock:
             now = time.time()
             if self._token is None or now >= (self._token_expiry - self.TOKEN_REFRESH_MARGIN):
@@ -98,7 +93,7 @@ class FabricConnectionFactory:
             return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
 
     def create_connection(self) -> pyodbc.Connection:
-        """Create a new Fabric connection with current token."""
+        """Create a new Fabric ODBC connection with current token."""
         logger.info("Creating Fabric connection to %s/%s", self._server, self._database)
         token_struct = self._get_token_struct()
         conn_str = (
@@ -114,17 +109,7 @@ class FabricConnectionFactory:
 
 
 class ConnectionPool:
-    """
-    Thread-safe connection pool for pyodbc connections.
-
-    Supports dual pools: one for Warehouse (reads) and one for DB (writes).
-
-    Features:
-    - Configurable pool size (min/max connections)
-    - Connection health checks before reuse
-    - Automatic connection recycling
-    - Thread-safe operation
-    """
+    """Thread-safe pyodbc connection pool with health checks and auto-recycling."""
 
     _wh_instance: "ConnectionPool | None" = None
     _db_instance: "ConnectionPool | None" = None
@@ -149,7 +134,7 @@ class ConnectionPool:
         self._initialize_pool()
 
     def _initialize_pool(self) -> None:
-        """Create initial connections up to min_size."""
+        """Pre-create connections up to min_size."""
         for _ in range(self._min_size):
             try:
                 conn = self._create_connection()
@@ -158,7 +143,7 @@ class ConnectionPool:
                 logger.warning("Failed to pre-create connection: %s", e)
 
     def _create_connection(self) -> pyodbc.Connection:
-        """Create a new database connection via factory."""
+        """Create a new connection, raising RuntimeError if pool is exhausted."""
         with self._size_lock:
             if self._size >= self._max_size:
                 raise RuntimeError(f"Connection pool exhausted (max={self._max_size})")
@@ -185,18 +170,7 @@ class ConnectionPool:
             return False
 
     def get_connection(self, timeout: float = 5.0) -> pyodbc.Connection:
-        """
-        Get a connection from the pool.
-
-        Args:
-            timeout: Max seconds to wait for a connection
-
-        Returns:
-            A database connection
-
-        Raises:
-            RuntimeError: If pool is closed or no connection available
-        """
+        """Get a connection from the pool or create a new one."""
         if self._closed:
             raise RuntimeError("Connection pool is closed")
 
@@ -235,7 +209,7 @@ class ConnectionPool:
 
     @property
     def stats(self) -> dict[str, int]:
-        """Return pool statistics."""
+        """Return pool size and usage statistics."""
         available = self._pool.qsize()
         return {
             "total_connections": self._size,
@@ -243,6 +217,53 @@ class ConnectionPool:
             "in_use": self._size - available,
             "max_size": self._max_size,
         }
+
+    def ping_idle_connections(self) -> tuple[int, int]:
+        """Ping idle connections; discard stale ones and refill to min_size.
+
+        Called by the background keep-alive thread.  Non-blocking for
+        concurrent ``get_connection()`` callers.
+
+        Returns ``(pinged, replaced)`` counts.
+        """
+        if self._closed:
+            return 0, 0
+
+        pinged = 0
+        replaced = 0
+        survivors: list[pyodbc.Connection] = []
+
+        # Drain idle queue non-blockingly
+        while True:
+            try:
+                conn = self._pool.get_nowait()
+            except Empty:
+                break
+            pinged += 1
+            if self._is_connection_healthy(conn):
+                survivors.append(conn)
+            else:
+                self._close_connection(conn)
+                replaced += 1
+                logger.info("Keep-alive: discarded stale connection (size %d/%d)", self._size, self._max_size)
+
+        # Re-queue survivors
+        for conn in survivors:
+            try:
+                self._pool.put_nowait(conn)
+            except Exception:
+                self._close_connection(conn)
+
+        # Top up to min_size so the pool is never empty after a sweep
+        for _ in range(max(0, self._min_size - self._pool.qsize())):
+            try:
+                new_conn = self._create_connection()
+                self._pool.put_nowait(new_conn)
+            except Exception as exc:
+                logger.warning("Keep-alive: failed to create replacement: %s", exc)
+                break
+
+        return pinged, replaced
 
     def close_all(self) -> None:
         """Close all connections in the pool."""
@@ -257,7 +278,7 @@ class ConnectionPool:
 
     @contextmanager
     def connection(self) -> Generator[pyodbc.Connection, None, None]:
-        """Context manager for getting and returning connections."""
+        """Context manager that acquires and auto-returns a connection."""
         conn = self.get_connection()
         try:
             yield conn
@@ -309,23 +330,10 @@ class ConnectionPool:
 async def execute_query(
     settings: Settings, sql: str, params: tuple[Any, ...] | None = None
 ) -> list[dict[str, Any]]:
-    """
-    Execute a SELECT query and return results as a list of dictionaries.
-
-    Uses the DB pool (SuperDB) for application CRUD operations.
-
-    Args:
-        settings: Application settings
-        sql: SQL query string (use ? placeholders for parameters)
-        params: Optional tuple of parameters for parameterized queries
-
-    Returns:
-        List of dictionaries, where each dictionary represents a row
-    """
+    """Execute a SELECT query on the DB pool and return rows as dicts."""
     pool = ConnectionPool.get_db_pool(settings)
 
     def _execute() -> list[dict[str, Any]]:
-        """Execute query synchronously using connection pool."""
         with pool.connection() as conn:
             cursor = conn.cursor()
             try:
@@ -359,11 +367,7 @@ async def execute_query(
 
 
 def adapt_sql_for_wh(sql: str, target_schema: str = "gold") -> str:
-    """Replace dbo schema references with the warehouse schema.
-
-    Handles both bracketed ([dbo].) and unbracketed (dbo.) variants,
-    using case-insensitive matching.
-    """
+    """Replace dbo schema references with the target warehouse schema."""
     sql = re.sub(r"\[dbo\]\.", f"[{target_schema}].", sql, flags=re.IGNORECASE)
     sql = re.sub(r"\bdbo\.", f"[{target_schema}].", sql, flags=re.IGNORECASE)
     return sql
@@ -372,11 +376,7 @@ def adapt_sql_for_wh(sql: str, target_schema: str = "gold") -> str:
 async def execute_wh_query(
     settings: Settings, sql: str, params: tuple[Any, ...] | None = None
 ) -> list[dict[str, Any]]:
-    """Execute a SELECT query against the Warehouse (gold schema).
-
-    Same interface as ``execute_query`` but uses the WH connection pool.
-    Schema references are automatically adapted (dbo -> wh_schema).
-    """
+    """Execute a SELECT query on the WH pool, adapting dbo to wh_schema."""
     sql = adapt_sql_for_wh(sql, target_schema=settings.wh_schema)
     pool = ConnectionPool.get_wh_pool(settings)
 
@@ -414,23 +414,10 @@ async def execute_wh_query(
 async def execute_insert(
     settings: Settings, sql: str, params: tuple[Any, ...] | None = None
 ) -> dict[str, Any]:
-    """
-    Execute an INSERT, UPDATE, or DELETE query.
-
-    Uses the DB pool (SuperDB) for application CRUD operations.
-
-    Args:
-        settings: Application settings
-        sql: SQL query string (use ? placeholders for parameters)
-        params: Optional tuple of parameters for parameterized queries
-
-    Returns:
-        Dictionary with success status and affected row count
-    """
+    """Execute an INSERT/UPDATE/DELETE on the DB pool and return status."""
     pool = ConnectionPool.get_db_pool(settings)
 
     def _execute() -> dict[str, Any]:
-        """Execute insert/update/delete synchronously using connection pool."""
         with pool.connection() as conn:
             cursor = conn.cursor()
             try:

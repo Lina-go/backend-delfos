@@ -1,4 +1,4 @@
-"""Greeting handler - responds to salutations without using the pipeline."""
+"""Greeting handler for salutations."""
 
 from typing import Any
 
@@ -7,7 +7,7 @@ from src.config.constants import QueryType
 
 
 class GreetingHandler:
-    """Handles greetings, farewells, and thank you messages."""
+    """Handles greetings, farewells, and thank-you messages."""
 
     RESPONSES = {
         "hola": "¡Hola! Soy Delfos, tu asistente de datos financieros de Colombia. ¿En qué te puedo ayudar?",
@@ -31,7 +31,7 @@ class GreetingHandler:
     }
 
     def handle(self, message: str) -> dict[str, Any]:
-        """Handle greeting message and return response."""
+        """Return a canned response matching the greeting type."""
         msg_lower = message.lower()
 
         response_key = "default"

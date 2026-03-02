@@ -1,4 +1,4 @@
-"""Report context provider for the advisor agent."""
+"""Advisor report context provider."""
 
 import json
 from collections.abc import MutableSequence
@@ -8,7 +8,7 @@ from agent_framework import ChatMessage, Context, ContextProvider
 
 
 class ReportContextProvider(ContextProvider):
-    """Injects report context as dynamic instructions before each model call."""
+    """Injects report context as dynamic instructions."""
 
     def __init__(self, report_context: dict[str, Any]) -> None:
         self._report_context = report_context

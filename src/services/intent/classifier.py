@@ -16,19 +16,10 @@ class IntentClassifier:
     """Classifies data questions into nivel_puntual or requiere_viz."""
 
     def __init__(self, settings: Settings):
-        """Initialize intent classifier."""
         self.settings = settings
 
     async def classify(self, message: str) -> dict[str, Any]:
-        """
-        Classify a data question's intent.
-
-        Args:
-            message: User's natural language question
-
-        Returns:
-            Dictionary with intent, pattern_type, and reasoning
-        """
+        """Classify a data question's intent."""
         try:
             system_prompt = build_intent_hierarchical_prompt()
 

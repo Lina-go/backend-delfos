@@ -1,4 +1,4 @@
-"""Pipeline state model."""
+"""Pipeline state dataclass."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass
 class PipelineState:
-    """State object passed through the pipeline."""
+    """Mutable state passed through the pipeline."""
 
     # Input
     user_message: str
@@ -55,6 +55,9 @@ class PipelineState:
     series_name: str | None = None
     category_name: str | None = None
 
+    indicators: list[dict[str, Any]] = field(default_factory=list)
+    indicator_specs: list[dict[str, Any]] = field(default_factory=list)
+
     # Pattern hooks (e.g., relacion correlation stats)
     stats_summary: dict[str, Any] | None = None
 
@@ -63,16 +66,12 @@ class PipelineState:
 
     @property
     def resolved_tables(self) -> list[str]:
-        """Tables to associate with this query.
-
-        Prefers the schema-selected tables; falls back to the tables
-        reported by the SQL generator when schema context is absent.
-        """
+        """Schema-selected tables, falling back to SQL-reported ones."""
         schema_tables = self.schema_context.get("tables", []) if self.schema_context else []
         return schema_tables or self.sql_tables
 
     def reset_sql_state(self) -> None:
-        """Reset SQL-related state for retry attempts."""
+        """Reset SQL-related state for retries."""
         self.sql_query = None
         self.sql_tables = []
         self.sql_results = None

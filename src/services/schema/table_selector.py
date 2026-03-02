@@ -12,23 +12,10 @@ class TableSelector:
     """Selects relevant tables based on user message."""
 
     def __init__(self, settings: Settings):
-        """Initialize table selector.
-
-        Args:
-            settings: Application settings
-        """
         self.settings = settings
 
     async def select_tables(self, message: str) -> list[str]:
-        """
-        Select relevant tables based on user message.
-
-        Args:
-            message: User's natural language question
-
-        Returns:
-            List of relevant table names
-        """
+        """Select relevant tables based on user message."""
         try:
             # Use get_tables_for_query to find tables based on concepts
             tables = get_tables_for_query(message)

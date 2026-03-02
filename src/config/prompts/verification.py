@@ -1,6 +1,4 @@
-"""
-Verification agent system prompts.
-"""
+"""Verification agent system prompts."""
 
 
 def build_verification_system_prompt() -> str:

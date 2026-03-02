@@ -1,7 +1,5 @@
 """Project endpoints."""
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, Query
 
 from src.api.models import (
@@ -9,6 +7,7 @@ from src.api.models import (
     CreateProjectRequest,
     OperationResponse,
     Project,
+    ProjectItem,
 )
 from src.config.constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from src.config.settings import Settings, get_settings
@@ -54,11 +53,11 @@ async def add_project_item(
     return OperationResponse(id=item_id)
 
 
-@router.get("/{project_id}/items")
+@router.get("/{project_id}/items", response_model=list[ProjectItem])
 async def get_project_items(
     project_id: str,
     settings: Settings = Depends(get_settings),
-) -> list[dict[str, Any]]:
+) -> list[ProjectItem]:
     """List all items for a project."""
     svc = ProjectService(settings)
     return await svc.get_items(project_id)

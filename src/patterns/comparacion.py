@@ -1,8 +1,4 @@
-"""Comparacion temporal pattern hooks -- enforce 12-month default.
-
-Registers hooks for temporal sub_types under comparacion:
-tendencia_simple, tendencia_comparada, evolucion_composicion, evolucion_concentracion.
-"""
+"""Comparacion temporal pattern hooks."""
 
 from __future__ import annotations
 

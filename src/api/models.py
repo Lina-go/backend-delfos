@@ -45,6 +45,8 @@ class ChatResponse(BaseModel):
     series_name: str | None = Field(None, description="Label for series grouping")
     category_name: str | None = Field(None, description="Label for category grouping")
     is_tasa: bool = Field(False, description="Whether the question involves interest rates")
+    indicators: list[dict[str, Any]] = Field(default_factory=list, description="KPI indicator results")
+    indicator_specs: list[dict[str, Any]] = Field(default_factory=list, description="Indicator computation specs for refresh")
     link_power_bi: str | None = Field(None, description="Power BI URL")
     insight: str | None = Field(None, description="Generated insight")
     sql_query: str | None = Field(None, description="Generated SQL query")
@@ -60,6 +62,28 @@ class ChatResponse(BaseModel):
     clarification_question: str | None = Field(
         None, description="Question to ask the user for clarification"
     )
+
+
+class ChatV2Response(BaseModel):
+    """Response model for chat v2 endpoint."""
+
+    patron: str = Field("chat_v2", description="Pipeline identifier")
+    insight: str | None = Field(None, description="Generated insight or conversational response")
+    datos: list[dict[str, Any]] | None = Field(None, description="SQL query results")
+    data_points: list[dict[str, Any]] | None = Field(None, description="Formatted data points")
+    indicators: list[dict[str, Any]] = Field(default_factory=list, description="KPI indicator results")
+    indicator_specs: list[dict[str, Any]] = Field(default_factory=list, description="Indicator computation specs")
+    visualizacion: str = Field("NO", description="YES or NO")
+    tipo_grafica: str | None = Field(None, description="Chart type")
+    titulo_grafica: str | None = Field(None, description="Chart title")
+    metric_name: str | None = Field(None, description="Metric name")
+    x_axis_name: str | None = Field(None, description="Label for X axis")
+    y_axis_name: str | None = Field(None, description="Label for Y axis")
+    series_name: str | None = Field(None, description="Label for series grouping")
+    category_name: str | None = Field(None, description="Label for category grouping")
+    is_tasa: bool = Field(False, description="Whether the question involves interest rates")
+    link_power_bi: str | None = Field(None, description="Power BI URL")
+    sql_query: str | None = Field(None, description="Generated SQL query")
 
 
 class HealthResponse(BaseModel):
@@ -133,6 +157,7 @@ class Graph(BaseModel):
     created_at: datetime | None = None
     metadata: dict[str, Any] | None = None
     user_id: str | None = None
+    bullet: str | None = None
 
     @classmethod
     def from_db_row(cls, row: dict[str, Any]) -> "Graph":
@@ -145,6 +170,7 @@ class Graph(BaseModel):
             created_at=row.get("created_at"),
             metadata=_parse_json_field(row.get("metadata")),
             user_id=row.get("user_id"),
+            bullet=row.get("bullet"),
         )
 
 
@@ -199,6 +225,7 @@ class InformeGraph(BaseModel):
     created_at: datetime | None = None
     label_id: str | None = None
     label_name: str | None = None
+    bullet: str | None = None
 
     @classmethod
     def from_db_row(cls, row: dict[str, Any]) -> "InformeGraph":
@@ -212,6 +239,7 @@ class InformeGraph(BaseModel):
             created_at=row.get("created_at"),
             label_id=str(v) if (v := row.get("label_id")) else None,
             label_name=str(v) if (v := row.get("label_name")) else None,
+            bullet=row.get("bullet"),
         )
 
 
@@ -326,6 +354,70 @@ class BulkOperationResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Informe graph operations
+# ---------------------------------------------------------------------------
+
+
+class AddGraphsResponse(BaseModel):
+    """Response for adding graphs to an informe."""
+
+    status: str = "success"
+    added: list[str] = Field(default_factory=list, description="IDs of graphs successfully added")
+    skipped_duplicates: list[str] = Field(default_factory=list, description="IDs already in the informe")
+    not_found: list[str] = Field(default_factory=list, description="IDs that don't exist")
+
+
+class RefreshErrorItem(BaseModel):
+    """A single graph that failed to refresh."""
+
+    id: str
+    error: str
+
+
+class RefreshSkippedItem(BaseModel):
+    """A single graph that was skipped during refresh."""
+
+    id: str
+    reason: str
+
+
+class RefreshInformeResponse(BaseModel):
+    """Response for refreshing all graphs in an informe."""
+
+    status: str = "success"
+    informe_id: str
+    refreshed: list[str] = Field(default_factory=list, description="IDs of refreshed graphs")
+    failed: list[RefreshErrorItem] = Field(default_factory=list)
+    skipped: list[RefreshSkippedItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Graph Bullets models
+# ---------------------------------------------------------------------------
+
+
+class GraphBulletsRequest(BaseModel):
+    """Request to generate bullet points for all graphs in an informe."""
+
+    informe_id: str = Field(..., min_length=1, description="Informe identifier")
+
+
+class GraphBulletItem(BaseModel):
+    """A single graph bullet point."""
+
+    graph_id: str
+    title: str
+    bullet: str
+
+
+class GraphBulletsResponse(BaseModel):
+    """Response with bullet points for all graphs in an informe."""
+
+    informe_id: str
+    bullets: list[GraphBulletItem]
+
+
+# ---------------------------------------------------------------------------
 # Advisor models
 # ---------------------------------------------------------------------------
 
@@ -354,8 +446,16 @@ class ProactiveInsightsRequest(BaseModel):
     informe_id: str = Field(..., min_length=1, description="Informe identifier")
 
 
+class InsightItem(BaseModel):
+    """A single structured insight from proactive analysis."""
+
+    title: str = Field(..., description="Short insight title (max 10 words)")
+    description: str = Field(..., description="Detailed description with concrete data")
+    severity: str = Field(..., description="CRITICO | ALTO | MODERADO")
+
+
 class ProactiveInsightsResponse(BaseModel):
     """Response with proactive insights for an informe."""
 
-    insights: str = Field(..., description="Proactive analysis and alerts")
+    insights: list[InsightItem] = Field(..., description="Top 3 structured insights")
     informe_id: str = Field(..., description="Informe identifier")

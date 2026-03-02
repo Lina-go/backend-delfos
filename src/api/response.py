@@ -26,6 +26,8 @@ def build_response(
         "series_name": None,
         "category_name": None,
         "is_tasa": False,
+        "indicators": [],
+        "indicator_specs": [],
         "link_power_bi": None,
         "insight": insight,
         "sql_query": None,

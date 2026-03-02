@@ -1,6 +1,4 @@
-"""
-Triage agent system prompts.
-"""
+"""Triage agent system prompts."""
 
 from src.config.constants import QueryType
 from src.config.database import get_all_table_names
@@ -11,16 +9,7 @@ def build_triage_system_prompt(
     context_summary: str | None = None,
     conversation_history: str | None = None,
 ) -> str:
-    """Build system prompt for triage agent.
-
-    Args:
-        has_context: Whether the user has previous conversation data available.
-        context_summary: Summary of data available in context (from ConversationContext.get_summary())
-        conversation_history: Formatted conversation history from ConversationContext.get_history_summary()
-
-    Returns:
-        System prompt string for the triage classifier.
-    """
+    """Build system prompt for triage agent."""
     valid_query_types = ", ".join([f'"{qt.value}"' for qt in QueryType])
     tables_list = ", ".join(get_all_table_names())
 

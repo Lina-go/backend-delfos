@@ -1,15 +1,4 @@
-"""
-Hierarchical classification: SubType -> ChartType.
-
-Replaces the archetype-based chart_rules with a single flat mapping.
-The LLM picks a SubType directly; the chart is deterministic from that choice.
-
-Backward compatibility:
-    - PatternType and Archetype enums are unchanged.
-    - PipelineState gains a `sub_type` field; existing fields are preserved.
-    - get_chart_type_for_subtype() replaces get_chart_type_for_archetype()
-      but the old function still works for any code that calls it.
-"""
+"""Hierarchical classification: SubType to ChartType mapping."""
 
 from enum import Enum
 
@@ -24,50 +13,39 @@ class SubType(str, Enum):
     """Single numeric answer, no chart. Signals: 'cual es', 'cuanto', 'cuantos'."""
 
     COMPARACION_DIRECTA = "comparacion_directa"
-    """Compare a metric across categories (absolute values).
-    Signals: 'como se compara', 'cuantos por [dimension]'."""
+    """Compare a metric across categories (absolute values)."""
 
     RANKING = "ranking"
-    """Order entities by a metric (top-N, mayor/menor).
-    Signals: 'top N', 'cuales son los mayores', 'ranking'."""
+    """Order entities by a metric (top-N, mayor/menor)."""
 
     CONCENTRACION = "concentracion"
-    """How concentrated a metric is among top performers.
-    Signals: 'que tan concentrado', 'participacion de mercado (snapshot)'."""
+    """How concentrated a metric is among top performers."""
 
     COMPOSICION_SIMPLE = "composicion_simple"
-    """Parts of a whole for ONE entity/total (exhaustive, sum to 100%).
-    Signals: 'distribucion', 'composicion', 'que porcentaje' (single entity)."""
+    """Parts of a whole for ONE entity/total (exhaustive, sum to 100%)."""
 
     COMPOSICION_COMPARADA = "composicion_comparada"
-    """Parts of a whole for MULTIPLE entities (side-by-side breakdowns).
-    Signals: 'composicion para cada banco', 'composicion de los top N'."""
+    """Parts of a whole for MULTIPLE entities (side-by-side breakdowns)."""
 
     # -- Temporal (evolution) -----------------------------------------------
     TENDENCIA_SIMPLE = "tendencia_simple"
-    """One metric evolving over time (single series).
-    Signals: 'como ha evolucionado [metrica]', 'historico de [metrica]'."""
+    """One metric evolving over time (single series)."""
 
     TENDENCIA_COMPARADA = "tendencia_comparada"
-    """Multiple entities/metrics evolving over time (multiple series).
-    Signals: 'evolucion de [metrica] de los N bancos', 'historico comparado'."""
+    """Multiple entities/metrics evolving over time (multiple series)."""
 
     EVOLUCION_COMPOSICION = "evolucion_composicion"
-    """Composition (parts of whole) changing over time.
-    Signals: 'evolucion de la composicion', 'composicion por mes'."""
+    """Composition (parts of whole) changing over time."""
 
     EVOLUCION_CONCENTRACION = "evolucion_concentracion"
-    """Concentration changing over time.
-    Signals: 'evolucion de la concentracion', 'concentracion por mes'."""
+    """Concentration changing over time."""
 
     # -- Relationship --------------------------------------------------------
     RELACION = "relacion"
-    """Correlation between two variables for the same subjects (scatter plot).
-    Signals: 'relacion entre X e Y', 'correlacion', 'vs', 'comparar X con Y' (2 metrics)."""
+    """Correlation between two variables for the same subjects (scatter plot)."""
 
     COVARIACION = "covariacion"
-    """Temporal evolution of the relationship between two variables.
-    Signals: 'evolucion de la relacion', 'historico de correlacion'."""
+    """Temporal evolution of the relationship between two variables."""
 
     # -- Blocked (not yet supported) ----------------------------------------
     SENSIBILIDAD = "sensibilidad"
@@ -126,12 +104,8 @@ def is_blocked(sub_type: SubType) -> bool:
 def get_chart_type_for_subtype(sub_type: SubType) -> ChartType | None:
     """Resolve chart type from a SubType.
 
-    Returns:
-        ChartType for visualization sub-types.
-        None for valor_puntual (text-only response).
-
     Raises:
-        ValueError: If the sub_type is blocked (caller should check is_blocked first).
+        ValueError: If the sub_type is blocked.
     """
     if sub_type in BLOCKED_SUBTYPES:
         raise ValueError(
@@ -208,17 +182,10 @@ def get_temporality(sub_type: SubType) -> str:
 
 
 def get_pattern_type(sub_type: SubType) -> str:
-    """Return the pattern type for a sub-type (lowercase for PipelineState).
-
-    Most sub-types map to 'comparacion'; only blocked sub-types
-    have specialized pattern types.
-    """
+    """Return the pattern type for a sub-type (lowercase for PipelineState)."""
     return _SUBTYPE_TO_PATTERN.get(sub_type, "Comparacion").lower()
 
 
 def get_legacy_pattern_type(sub_type: SubType) -> str:
-    """Return the legacy pattern type for a sub-type (capitalized for IntentResult).
-
-    Used by IntentResult.model_post_init to auto-populate the tipo_patron field.
-    """
+    """Return the legacy pattern type for a sub-type (capitalized for IntentResult)."""
     return _SUBTYPE_TO_PATTERN.get(sub_type, "Comparacion")

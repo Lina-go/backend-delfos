@@ -1,10 +1,4 @@
-"""
-Archetype definitions (A-K) for intent classification.
-
-Chart resolution is embedded per archetype via `chart_rules`:
-    A dict mapping (Temporality, is_plural) → ChartType | None
-    where is_plural = subject_cardinality > 1
-"""
+"""Archetype definitions (A-K) for intent classification."""
 
 import logging
 from dataclasses import asdict, dataclass, field
@@ -41,24 +35,16 @@ class ArchetypeInfo:
         temporality: Temporality = Temporality.STATIC,
         subject_cardinality: int = 1,
     ) -> ChartType | None:
-        """Resolve chart type based on temporality and subject cardinality.
-
-        Args:
-            temporality: Whether the query is static or temporal.
-            subject_cardinality: Number of subjects (1 = single, >1 = multiple).
-
-        Returns:
-            ChartType or None.
-        """
+        """Resolve chart type based on temporality and subject cardinality."""
         is_plural = subject_cardinality > 1
         return self.chart_rules.get((temporality, is_plural))
 
     def to_dict(self) -> dict[str, Any]:
-        """Get all information for the archetype as a dictionary."""
+        """Convert archetype to a dictionary."""
         return asdict(self)
 
     def get_all_info_as_string(self) -> str:
-        """Get all information for the archetype as a string."""
+        """Format archetype info as a human-readable string."""
         return (
             f"Archetype: {self.archetype}\n"
             f"Name: {self.name}\n"
@@ -333,16 +319,7 @@ def get_chart_type_for_archetype(
     temporality: Temporality = Temporality.STATIC,
     subject_cardinality: int = 1,
 ) -> ChartType | None:
-    """Get chart type using the archetype's embedded resolution rules.
-
-    Args:
-        archetype: Archetype enum.
-        temporality: Whether the query is static or temporal.
-        subject_cardinality: Number of subjects (1 = single, >1 = multiple).
-
-    Returns:
-        ChartType or None.
-    """
+    """Get chart type using the archetype's embedded resolution rules."""
     return ARCHETYPES[archetype].resolve_chart(temporality, subject_cardinality)
 
 

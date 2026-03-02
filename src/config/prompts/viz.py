@@ -1,18 +1,11 @@
-"""
-Visualization agent system prompts.
-"""
+"""Visualization agent system prompts."""
 
 
 def build_viz_mapping_prompt(
     chart_type: str | None = None,
     sub_type: str | None = None,
 ) -> str:
-    """Build lightweight prompt that asks the LLM for column mapping only.
-
-    The LLM receives column names + 3 sample rows and returns which columns
-    map to x_value, y_value, series, category, plus Spanish labels.
-    No data_points formatting — that's done by pure Python.
-    """
+    """Build the system prompt for LLM column-mapping."""
     chart_rules = ""
     if chart_type:
         chart_rules = (
@@ -110,6 +103,28 @@ def build_viz_mapping_prompt(
         "x_column = esa columna, month_column = null, x_format = 'YYYY-MM', "
         "x_axis_name = 'Periodo'\n"
         "- Si x es texto directo: x_format = null, month_column = null\n\n"
+        "## Indicadores KPI\n\n"
+        "Select KPI indicators to display alongside the chart (include all that are relevant).\n"
+        "Python calcula la aritmética — tú solo especificas QUÉ mostrar y CÓMO etiquetarlo.\n\n"
+        "### Calcs per-series (set 'series' al nombre o null para single-series)\n"
+        "- `period_delta`: cambio primero-a-ultimo. Unit 'pp' para participacion, 'bps' para tasas.\n"
+        "- `pct_change`: crecimiento % ((ultimo/primero-1)*100). Unit '%' para saldos.\n"
+        "- `prev_delta`: cambio vs periodo anterior (misma unit que period_delta).\n"
+        "- `momentum`: aceleracion = pendiente reciente menos pendiente inicial. Necesita 4+ puntos.\n\n"
+
+        "### Calcs cross-series (set series=null, Python elige la mejor serie)\n"
+        "- `max_change`: serie con mayor cambio absoluto en el periodo.\n"
+        "- `rank_change`: serie que mas posiciones movio en el ranking.\n"
+        "- `share_of_growth`: % del crecimiento total capturado por cada serie (solo valores absolutos).\n"
+        "- `growth_vs_market`: spread = crecimiento entidad menos crecimiento mercado (pp).\n\n"
+
+        "### Reglas de indicadores\n"
+        "- Max 3 indicadores. Cada uno debe revelar un insight diferente.\n"
+        "- tendencia_simple: [period_delta]. Agregar momentum si 4+ puntos.\n"
+        "- tendencia_comparada: preferir cross-series [share_of_growth, rank_change, max_change].\n"
+        "- valor_puntual / composicion / stacked_bar / scatter / bar: lista VACIA.\n"
+        "- Para cross-series: siempre set series=null.\n"
+        "- Para single-series: set series=null. Para multi per-series: set series al nombre.\n\n"
         "## Respuesta\n"
         "Responde SOLO con JSON dentro de tags <answer>:\n"
         "```json\n"
@@ -124,7 +139,11 @@ def build_viz_mapping_prompt(
         '  "x_axis_name": "Etiqueta eje X en español",\n'
         '  "y_axis_name": "Etiqueta eje Y en español",\n'
         '  "series_name": "Nombre serie en español o null",\n'
-        '  "category_name": "Nombre categoría en español o null"\n'
+        '  "category_name": "Nombre categoría en español o null",\n'
+        '  "indicators": [\n'
+        '    {"label": "Label en español", "calc": "period_delta|pct_change|prev_delta|momentum|max_change|rank_change|share_of_growth|growth_vs_market", '
+        '"unit": "pp|bps|%|abs", "series": "nombre_serie o null"}\n'
+        "  ]\n"
         "}\n"
         "```\n"
     )

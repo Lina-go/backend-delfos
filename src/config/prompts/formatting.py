@@ -1,6 +1,4 @@
-"""
-Format agent system prompts.
-"""
+"""Format agent system prompts."""
 
 
 def build_format_prompt() -> str:

@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from src.api.models import ChatRequest
+from src.api.models import ChatRequest, ChatV2Response
 from src.config.settings import Settings, get_settings
 from src.services.chat_v2.agent import ChatV2Agent
 
@@ -18,17 +18,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/chat")
+@router.post("/chat", response_model=ChatV2Response)
 async def chat_v2(
     request: ChatRequest,
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    """Process a message through the Chat V2 single-agent pipeline.
-
-    The agent's execute_and_visualize tool embeds a JSON block in the response
-    with visualization data, data_points, and Power BI link.
-    This endpoint extracts that JSON and returns it as structured response.
-    """
+) -> ChatV2Response:
+    """Process a message through the Chat V2 single-agent pipeline."""
     try:
         agent = ChatV2Agent(settings)
         response_text = await agent.chat(request.user_id, request.message)
@@ -40,30 +35,27 @@ async def chat_v2(
             # Clean the JSON block from the text for the insight field
             insight = _clean_json_from_text(response_text, viz_data)
 
-            return {
-                "patron": "chat_v2",
-                "insight": insight or viz_data.get("titulo_grafica", ""),
-                "datos": viz_data.get("datos"),
-                "data_points": viz_data.get("data_points"),
-                "visualizacion": viz_data.get("visualizacion", "YES"),
-                "tipo_grafica": viz_data.get("tipo_grafica"),
-                "titulo_grafica": viz_data.get("titulo_grafica"),
-                "metric_name": viz_data.get("metric_name"),
-                "x_axis_name": viz_data.get("x_axis_name"),
-                "y_axis_name": viz_data.get("y_axis_name"),
-                "series_name": viz_data.get("series_name"),
-                "category_name": viz_data.get("category_name"),
-                "is_tasa": viz_data.get("is_tasa", False),
-                "link_power_bi": viz_data.get("link_power_bi"),
-                "sql_query": viz_data.get("sql_query"),
-            }
+            return ChatV2Response(
+                insight=insight or viz_data.get("titulo_grafica", ""),
+                datos=viz_data.get("datos"),
+                data_points=viz_data.get("data_points"),
+                indicators=viz_data.get("indicators", []),
+                indicator_specs=viz_data.get("indicator_specs", []),
+                visualizacion=viz_data.get("visualizacion", "YES"),
+                tipo_grafica=viz_data.get("tipo_grafica"),
+                titulo_grafica=viz_data.get("titulo_grafica"),
+                metric_name=viz_data.get("metric_name"),
+                x_axis_name=viz_data.get("x_axis_name"),
+                y_axis_name=viz_data.get("y_axis_name"),
+                series_name=viz_data.get("series_name"),
+                category_name=viz_data.get("category_name"),
+                is_tasa=viz_data.get("is_tasa", False),
+                link_power_bi=viz_data.get("link_power_bi"),
+                sql_query=viz_data.get("sql_query"),
+            )
 
         # No visualization data — conversational response (greeting, clarification, etc.)
-        return {
-            "patron": "chat_v2",
-            "insight": response_text,
-            "visualizacion": "NO",
-        }
+        return ChatV2Response(insight=response_text)
 
     except Exception as e:
         logger.error("Error in chat_v2: %s", e, exc_info=True)
@@ -75,13 +67,7 @@ async def chat_v2_stream(
     request: ChatRequest,
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
-    """Stream Chat V2 response as Server-Sent Events.
-
-    Text chunks are emitted as ``{"text": "..."}`` events.
-    After all text, a guaranteed ``{"viz_data": {...}}`` event is emitted
-    if the execute_and_visualize tool produced visualization data.
-    Finally ``{"done": true}`` signals the end.
-    """
+    """Stream Chat V2 response as Server-Sent Events."""
 
     _VIZ_SENTINEL = "__VIZ_DATA__"
     _CLARIFICATION_SENTINEL = "__CLARIFICATION__"
@@ -93,6 +79,8 @@ async def chat_v2_stream(
             chunk_count = 0
             total_chars = 0
             t_first_chunk = None
+            # Emit immediate status so the frontend knows processing started
+            yield f"data: {json.dumps({'status': 'processing'}, ensure_ascii=False)}\n\n"
             async for chunk in agent.chat_stream(request.user_id, request.message):
                 # Sentinel-prefixed chunks: viz data or clarification
                 if chunk.startswith(_VIZ_SENTINEL):
@@ -148,11 +136,7 @@ async def clear_session(
 
 
 def _extract_viz_json(text: str) -> dict[str, Any] | None:
-    """Extract the visualization JSON embedded in the agent's response.
-
-    The execute_and_visualize tool returns a JSON object with "visualization": true
-    and "data_points": [...]. Uses balanced-brace parsing to handle nested JSON.
-    """
+    """Extract the visualization JSON embedded in the agent's response."""
     # Look for our marker key
     for marker in ('"visualization"', '"visualizacion"'):
         idx = text.find(marker)

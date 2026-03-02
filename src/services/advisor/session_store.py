@@ -1,4 +1,4 @@
-"""In-memory session store for advisor agent threads with DB persistence."""
+"""Advisor agent session store."""
 
 import json
 import logging
@@ -25,10 +25,13 @@ class AdvisorSession:
     context_provider: Any = None
     created_at: float = field(default_factory=time.time)
     last_access: float = field(default_factory=time.time)
+    turn_count: int = 0
+    pending_summary: str | None = None
+    bg_summary_task: Any = None
 
 
 class AdvisorSessionStore:
-    """In-memory session cache backed by DB persistence in dbo.AdvisorSessions."""
+    """In-memory session cache with DB persistence."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, AdvisorSession] = {}
@@ -63,6 +66,34 @@ class AdvisorSessionStore:
         )
         self._sessions[key] = session
         return session
+
+    def increment_turn(self, user_id: str, informe_id: str) -> int:
+        """Increment the turn count and return the new value."""
+        session = self._sessions.get(self._key(user_id, informe_id))
+        if session:
+            session.turn_count += 1
+            return session.turn_count
+        return 0
+
+    def get_turn_count(self, user_id: str, informe_id: str) -> int:
+        """Return the current turn count for a session."""
+        session = self._sessions.get(self._key(user_id, informe_id))
+        return session.turn_count if session else 0
+
+    def update_pending_summary(self, user_id: str, informe_id: str, summary: str) -> None:
+        """Store a pre-built compaction summary for later use."""
+        session = self._sessions.get(self._key(user_id, informe_id))
+        if session:
+            session.pending_summary = summary
+
+    def consume_pending_summary(self, user_id: str, informe_id: str) -> str | None:
+        """Retrieve and clear the pre-built compaction summary."""
+        session = self._sessions.get(self._key(user_id, informe_id))
+        if session and session.pending_summary:
+            summary = session.pending_summary
+            session.pending_summary = None
+            return summary
+        return None
 
     def delete(self, user_id: str, informe_id: str) -> None:
         self._sessions.pop(self._key(user_id, informe_id), None)

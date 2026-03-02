@@ -1,11 +1,4 @@
-"""Chat V2 tools — @ai_function tools for the single-agent chat.
-
-The key tool is `execute_and_visualize` which is a mini-workflow:
-  SQL execution → unified classification + column mapping (1 LLM call) → data_points → Power BI.
-
-This guarantees every data response includes visualization + Power BI link,
-following the same rules as the V1 pipeline (subtypes.py, guards, build_data_points).
-"""
+"""Chat V2 tools for the single-agent chat."""
 
 import json
 import logging
@@ -22,8 +15,9 @@ from src.config.settings import Settings
 from src.config.subtypes import get_chart_type_for_subtype, get_subtype_from_string
 from src.config.validation import is_sql_safe
 from src.infrastructure.database.tools import DelfosTools
-from src.orchestrator.handlers._llm_helper import run_formatted_handler_agent
+from src.orchestrator.handlers._llm_helper import run_formatted_handler_agent, run_handler_agent
 from src.services.chat_v2.models import UnifiedClassification
+from src.services.chat_v2.indicators import compute_full_series_stats, resolve_indicators
 from src.services.viz.models import VizColumnMapping
 from src.services.viz.service import VisualizationService
 
@@ -36,6 +30,14 @@ viz_result_ctx: ContextVar[dict[str, Any] | None] = ContextVar("viz_result", def
 # Simple TTL cache for repeated queries (schema lookups, distinct values, etc.)
 _tool_cache: dict[str, tuple[float, str]] = {}
 _CACHE_TTL = 300  # 5 minutes
+
+# TTL cache for unified LLM classifications — keyed by sorted columns.
+# Same column structure almost always produces the same classification.
+_classification_cache: dict[str, tuple[float, UnifiedClassification]] = {}
+_CLASSIFICATION_CACHE_TTL = 600  # 10 minutes
+
+# Sub-types that support KPI indicators (double filter: Python + LLM prompt)
+_INDICATOR_SUBTYPES = {"tendencia_simple", "tendencia_comparada"}
 
 
 def _cache_get(key: str) -> str | None:
@@ -73,56 +75,79 @@ def _build_column_stats(
     return stats
 
 
-def _try_fix_entity_names(sql: str, delfos_tools: DelfosTools) -> str | None:
-    """Auto-correct case-sensitive entity names in SQL.
+def _try_fix_filter_values(sql: str, delfos_tools: DelfosTools) -> str | None:
+    """Auto-correct filter values in SQL by checking actual DB values.
 
-    When SQL returns 0 rows, this checks if NOMBRE_ENTIDAD filters use wrong casing
-    by looking up real values from the warehouse and replacing case-insensitively.
+    Detects all `column = 'value'` and `column IN ('v1', 'v2')` patterns,
+    fetches distinct values for each column, and corrects case/spelling mismatches.
     """
-    if "NOMBRE_ENTIDAD" not in sql:
-        return None
-
+    # Find the main table
     table_match = re.search(r"gold\.(\w+)", sql)
     if not table_match:
         return None
     table = table_match.group(1)
 
-    cache_key = f"distinct:{table}:NOMBRE_ENTIDAD"
-    cached = _cache_get(cache_key)
-    if cached:
-        real_names_raw = cached
-    else:
-        try:
-            real_names_raw = delfos_tools.get_distinct_values(table, "NOMBRE_ENTIDAD")
-            _cache_set(cache_key, real_names_raw)
-        except Exception:
-            return None
+    # Extract column = 'value' patterns from WHERE clauses
+    # Matches: COLUMN = 'value', COLUMN IN ('v1', 'v2'), COLUMN = N'value'
+    filter_cols: set[str] = set()
+    for match in re.finditer(r"(\w+)\s*(?:=|IN\s*\()\s*N?'", sql, re.IGNORECASE):
+        col = match.group(1).upper()
+        # Skip SQL keywords and numeric/temporal columns
+        if col in {"SELECT", "FROM", "WHERE", "AND", "OR", "ON", "AS", "JOIN",
+                    "YEAR", "MONTH", "DAY", "NULL", "NOT", "CAST", "ROUND"}:
+            continue
+        filter_cols.add(match.group(1))  # preserve original case
 
-    real_names = [n.strip() for n in real_names_raw.split("\n") if n.strip()]
-    name_lookup = {n.lower(): n for n in real_names}
+    if not filter_cols:
+        return None
 
+    # Build lookup for each filtered column
+    all_lookups: dict[str, dict[str, str]] = {}  # col -> {lower: real}
+    for col in filter_cols:
+        cache_key = f"distinct:{table}:{col}"
+        cached = _cache_get(cache_key)
+        if cached:
+            raw = cached
+        else:
+            try:
+                raw = delfos_tools.get_distinct_values(table, col)
+                _cache_set(cache_key, raw)
+            except Exception:
+                continue
+        real_values = [v.strip() for v in raw.split("\n") if v.strip()]
+        all_lookups[col] = {v.lower(): v for v in real_values}
+
+    if not all_lookups:
+        return None
+
+    # Fix quoted strings in the SQL
     quoted_strings = re.findall(r"'([^']*)'", sql)
     fixed_sql = sql
     for qs in quoted_strings:
         core = qs.strip("%")
         if not core:
             continue
-        # Exact case-insensitive match
-        real = name_lookup.get(core.lower())
-        if real:
-            if "%" in qs:
-                fixed_sql = fixed_sql.replace(f"'{qs}'", f"'%{real}%'")
-            else:
-                fixed_sql = fixed_sql.replace(f"'{qs}'", f"'{real}'")
-            continue
-        # Substring match (e.g., 'BOGOTA' → 'Banco de Bogota S.A.')
-        for real_name in real_names:
-            if core.lower() in real_name.lower():
+        # Try each column's lookup
+        for _col, lookup in all_lookups.items():
+            # Exact case-insensitive match
+            real = lookup.get(core.lower())
+            if real:
                 if "%" in qs:
-                    fixed_sql = fixed_sql.replace(f"'{qs}'", f"'%{real_name}%'")
+                    fixed_sql = fixed_sql.replace(f"'{qs}'", f"'%{real}%'")
                 else:
-                    fixed_sql = fixed_sql.replace(f"'{qs}'", f"'{real_name}'")
+                    fixed_sql = fixed_sql.replace(f"'{qs}'", f"'{real}'")
                 break
+            # Substring match
+            for real_val in lookup.values():
+                if core.lower() in real_val.lower():
+                    if "%" in qs:
+                        fixed_sql = fixed_sql.replace(f"'{qs}'", f"'%{real_val}%'")
+                    else:
+                        fixed_sql = fixed_sql.replace(f"'{qs}'", f"'{real_val}'")
+                    break
+            else:
+                continue
+            break
 
     return fixed_sql if fixed_sql != sql else None
 
@@ -130,14 +155,7 @@ def _try_fix_entity_names(sql: str, delfos_tools: DelfosTools) -> str | None:
 def create_chat_v2_tools(
     delfos_tools: DelfosTools, settings: Settings,
 ) -> tuple[list[Any], dict[str, Any]]:
-    """Create @ai_function tools + result_holder for the Chat V2 agent.
-
-    Returns:
-        (tools_list, result_holder) — result_holder is a mutable dict with keys
-        ``"viz"`` and ``"clarification"`` set by the tools during execution.
-        Using a mutable dict instead of ContextVar guarantees propagation
-        across any async boundary.
-    """
+    """Create @ai_function tools and result_holder for the Chat V2 agent."""
     # VisualizationService for guards + build_data_points + DB insert (LLM call skipped)
     viz_service = VisualizationService(settings, db_tools=delfos_tools)
     result_holder: dict[str, Any] = {"viz": None, "clarification": None}
@@ -225,6 +243,10 @@ def create_chat_v2_tools(
         Returns:
             JSON con las preguntas para el frontend.
         """
+        # Idempotent: ignore duplicate calls within the same turn
+        if result_holder.get("clarification"):
+            return json.dumps({"already_requested": True}, ensure_ascii=False)
+
         try:
             items = json.loads(questions_json)
         except (json.JSONDecodeError, TypeError):
@@ -290,31 +312,76 @@ def create_chat_v2_tools(
                 ensure_ascii=False,
             )
 
-        # --- Step 2: Execute SQL ---
+        # --- Step 2: Execute SQL (with LLM self-correction on error) ---
         logger.info("[SQL] question=%s | sql=%s", question, sql_query)
         t0 = time.time()
+        sql_error: str | None = None
         try:
             result = delfos_tools.execute_sql(sql_query)
             if result.get("error"):
-                return json.dumps(
-                    {
-                        "error": f"Error SQL: {result['error']}. Verifica schema gold y sintaxis T-SQL.",
-                        "visualizacion": "NO",
-                    },
-                    ensure_ascii=False,
-                )
-            rows = result.get("data", [])
+                sql_error = result["error"]
         except Exception as e:
+            sql_error = str(e)
+
+        # Self-heal: ask the LLM to fix the SQL if it failed
+        if sql_error:
+            logger.warning("[SELF-HEAL] SQL failed: %s — asking LLM to fix", sql_error[:120])
+            try:
+                fixed_sql = await run_handler_agent(
+                    settings,
+                    name="SQLFixer",
+                    instructions=(
+                        "Eres un experto en T-SQL para Microsoft Fabric / SQL Server. "
+                        "El usuario te da un SQL que falló y el error. "
+                        "Devuelve SOLO el SQL corregido, sin explicación ni markdown.\n\n"
+                        "Restricciones de T-SQL que DEBES respetar:\n"
+                        "- NO uses aggregates anidados: SUM(COUNT(...)) es ilegal.\n"
+                        "- NO uses subqueries dentro de funciones de agregación: "
+                        "SUM(CASE WHEN x IN (SELECT ...) ...) es ilegal (error 130). "
+                        "Solución: materializa el subquery en un CTE o JOIN previo, "
+                        "y referencia la columna resultante en el aggregate.\n"
+                        "- NO uses LIMIT, usa TOP N.\n"
+                        "- NO uses ILIKE, usa LIKE con COLLATE o LOWER().\n"
+                        "- NO uses boolean expressions en SELECT; usa CASE WHEN.\n"
+                        "- Un CROSS JOIN a un CTE escalar NO resuelve el error 130 "
+                        "si el aggregate aún contiene IN (SELECT ...)."
+                    ),
+                    message=f"SQL:\n{sql_query}\n\nError:\n{sql_error}",
+                    model=settings.chat_v2_classifier_model,
+                    tools=[],
+                    max_tokens=2048,
+                    max_iterations=1,
+                    temperature=0.0,
+                )
+                fixed_sql = fixed_sql.strip().strip("`").strip()
+                if fixed_sql.lower().startswith("sql"):
+                    fixed_sql = fixed_sql[3:].strip()
+                is_safe_fix, _ = is_sql_safe(fixed_sql)
+                if is_safe_fix and fixed_sql != sql_query:
+                    logger.info("[SELF-HEAL] Retrying with LLM-corrected SQL")
+                    result = delfos_tools.execute_sql(fixed_sql)
+                    if not result.get("error"):
+                        sql_query = fixed_sql
+                        sql_error = None
+            except Exception as fix_exc:
+                logger.warning("[SELF-HEAL] LLM fix failed: %s", fix_exc)
+
+        if sql_error:
             return json.dumps(
-                {"error": f"Error SQL: {e}. Verifica schema gold y sintaxis T-SQL.", "visualizacion": "NO"},
+                {
+                    "error": f"Error SQL: {sql_error}. Verifica schema gold y sintaxis T-SQL.",
+                    "visualizacion": "NO",
+                },
                 ensure_ascii=False,
             )
+
+        rows = result.get("data", [])
         t_sql = time.time() - t0
         logger.info("[TIMING] SQL execution: %.2fs (%d rows)", t_sql, len(rows))
 
         if not rows:
-            # Self-healing: try fixing case-sensitive entity names
-            corrected = _try_fix_entity_names(sql_query, delfos_tools)
+            # Self-healing: try fixing filter values (entity names, segments, etc.)
+            corrected = _try_fix_filter_values(sql_query, delfos_tools)
             if corrected:
                 logger.info("[SELF-HEAL] Retrying with corrected SQL: %s", corrected)
                 t0_retry = time.time()
@@ -334,51 +401,68 @@ def create_chat_v2_tools(
                 ensure_ascii=False,
             )
 
-        # --- Step 3: Unified classification + column mapping (1 LLM call) ---
+        # --- Step 3: Unified classification + column mapping (cached or 1 LLM call) ---
         columns = list(rows[0].keys())
-        n = len(rows)
-        if n <= 5:
-            sample_rows = rows
-        else:
-            step = max(1, n // 5)
-            sample_rows = [rows[i * step] for i in range(min(5, n))]
-        column_stats = _build_column_stats(rows)
+        classification_key = question + "||" + "|".join(sorted(columns))
 
-        t0 = time.time()
-        try:
-            combined = await run_formatted_handler_agent(
-                settings,
-                name="UnifiedClassifier",
-                instructions=build_unified_intent_viz_prompt(),
-                message=json.dumps(
+        # Check classification cache — same columns almost always map the same way
+        combined: UnifiedClassification | None = None
+        cached_entry = _classification_cache.get(classification_key)
+        if cached_entry is not None:
+            ts, cached_classification = cached_entry
+            if time.time() - ts <= _CLASSIFICATION_CACHE_TTL:
+                combined = cached_classification
+                logger.info("[TIMING] Classification CACHE HIT for columns: %s", classification_key[:80])
+                t_llm = 0.0
+
+        if combined is None:
+            n = len(rows)
+            if n <= 5:
+                sample_rows = rows
+            else:
+                step = max(1, n // 5)
+                sample_rows = [rows[i * step] for i in range(min(5, n))]
+            column_stats = _build_column_stats(rows)
+
+            t0 = time.time()
+            try:
+                combined = await run_formatted_handler_agent(
+                    settings,
+                    name="UnifiedClassifier",
+                    instructions=build_unified_intent_viz_prompt(),
+                    message=json.dumps(
+                        {
+                            "question": question,
+                            "columns": columns,
+                            "sample_rows": sample_rows,
+                            "column_stats": column_stats,
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    response_format=UnifiedClassification,
+                    model=settings.chat_v2_classifier_model,
+                    tools=[],
+                    max_tokens=1024,
+                    temperature=0.0,
+                )
+            except Exception as e:
+                logger.error("Unified classification failed: %s", e, exc_info=True)
+                return json.dumps(
                     {
-                        "question": question,
-                        "columns": columns,
-                        "sample_rows": sample_rows,
-                        "column_stats": column_stats,
+                        "error": f"Error en clasificación: {e}",
+                        "visualizacion": "NO",
+                        "datos": rows[:10],
+                        "sql_query": sql_query,
                     },
                     ensure_ascii=False,
                     default=str,
-                ),
-                response_format=UnifiedClassification,
-                model=settings.chat_v2_classifier_model,
-                tools=[],
-                max_tokens=1024,
-                temperature=0.0,
-            )
-        except Exception as e:
-            logger.error("Unified classification failed: %s", e, exc_info=True)
-            return json.dumps(
-                {
-                    "error": f"Error en clasificación: {e}",
-                    "visualizacion": "NO",
-                    "datos": rows[:10],
-                    "sql_query": sql_query,
-                },
-                ensure_ascii=False,
-                default=str,
-            )
-        t_llm = time.time() - t0
+                )
+            t_llm = time.time() - t0
+
+            # Store in cache for future queries with same column structure
+            if isinstance(combined, UnifiedClassification):
+                _classification_cache[classification_key] = (time.time(), combined)
         logger.info("[TIMING] Unified LLM classification: %.2fs", t_llm)
 
         if not isinstance(combined, UnifiedClassification):
@@ -458,6 +542,11 @@ def create_chat_v2_tools(
             series_name=combined.series_name,
             category_name=combined.category_name,
         )
+
+        # Guard: stacked-bar normalizes to 100% — y-axis shows percentages, not raw values
+        if chart_type_str == "stackedbar":
+            mapping = mapping.model_copy(update={"y_axis_name": "Participación (%)"})
+
         logger.info(
             "[TIMING] Mapping: x=%s, y=%s, month=%s, series=%s, category=%s",
             mapping.x_column, mapping.y_column, mapping.month_column,
@@ -506,6 +595,15 @@ def create_chat_v2_tools(
                 default=str,
             )
 
+        # --- Step 6b: Compute indicators (only for applicable sub_types) ---
+        indicator_results: list[dict[str, Any]] = []
+        if sub_type_str in _INDICATOR_SUBTYPES and combined.indicators:
+            full_stats = compute_full_series_stats(data_points)
+            indicator_results = resolve_indicators(full_stats, combined.indicators)
+            indicator_results = indicator_results[:3]
+            if indicator_results:
+                logger.info("[INDICATORS] %d indicators resolved", len(indicator_results))
+
         # --- Step 7: Build response (same format as V1 ResponseFormatter) ---
         titulo = combined.titulo_grafica or question[:60]
         is_tasa = combined.is_tasa
@@ -517,6 +615,8 @@ def create_chat_v2_tools(
             "tipo_grafica": chart_type_str,
             "titulo_grafica": titulo,
             "data_points": data_points,
+            "indicators": indicator_results,
+            "indicator_specs": [s.model_dump() for s in combined.indicators] if combined.indicators else [],
             "metric_name": viz_result.get("metric_name", "Valor"),
             "x_axis_name": viz_result.get("x_axis_name", ""),
             "y_axis_name": viz_result.get("y_axis_name", ""),
@@ -554,12 +654,74 @@ def create_chat_v2_tools(
             "metric_name": viz_result.get("metric_name", "Valor"),
             "is_tasa": is_tasa,
             "sample_data": rows[:5],
+            "indicators_summary": [
+                {"label": i["label"], "formatted": i["formatted"]} for i in indicator_results
+            ],
         }
         return json.dumps(llm_summary, ensure_ascii=False, default=str)
 
     # ------------------------------------------------------------------
+    # modify_chart — tweak active visualization without re-executing SQL
+    # ------------------------------------------------------------------
+    @ai_function
+    def modify_chart(modifications_json: str) -> str:
+        """Modifica la gráfica activa sin re-ejecutar SQL.
+
+        Úsala cuando el usuario pida cambiar título, ejes, tipo de gráfico
+        u otras propiedades visuales de la gráfica actual.
+
+        Args:
+            modifications_json: JSON con los campos a modificar. Campos válidos:
+                - titulo_grafica: nuevo título
+                - tipo_grafica: "bar" | "line" | "stackedbar" | "pie" | "scatter"
+                - y_axis_name: nuevo label del eje Y
+                - x_axis_name: nuevo label del eje X
+                - metric_name: nuevo nombre de la métrica
+                - series_name: nuevo nombre de la serie
+                - category_name: nuevo nombre de la categoría
+
+        Returns:
+            JSON confirmando los cambios aplicados.
+        """
+        current_viz = result_holder.get("viz")
+        if not current_viz or not current_viz.get("visualization"):
+            return json.dumps(
+                {"error": "No hay gráfica activa para modificar."},
+                ensure_ascii=False,
+            )
+
+        try:
+            mods = json.loads(modifications_json)
+        except json.JSONDecodeError:
+            return json.dumps(
+                {"error": "JSON inválido en modifications_json."},
+                ensure_ascii=False,
+            )
+
+        ALLOWED_FIELDS = {
+            "titulo_grafica", "tipo_grafica", "y_axis_name", "x_axis_name",
+            "metric_name", "series_name", "category_name",
+        }
+
+        applied = {}
+        for key, value in mods.items():
+            if key in ALLOWED_FIELDS:
+                current_viz[key] = value
+                applied[key] = value
+
+        if not applied:
+            return json.dumps(
+                {"error": "Ningún campo válido para modificar."},
+                ensure_ascii=False,
+            )
+
+        result_holder["viz"] = current_viz
+        viz_result_ctx.set(current_viz)
+        logger.info("[MODIFY_CHART] Applied: %s", applied)
+
+        return json.dumps({"modified": True, "applied": applied}, ensure_ascii=False)
+
+    # ------------------------------------------------------------------
     # Return tools + result holder
     # ------------------------------------------------------------------
-    # request_clarification + execute_and_visualize exposed to the agent.
-    # Exploration tools remain defined for internal use by _try_fix_entity_names.
-    return [request_clarification, execute_and_visualize], result_holder
+    return [request_clarification, execute_and_visualize, modify_chart], result_holder

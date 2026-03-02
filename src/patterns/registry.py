@@ -1,9 +1,4 @@
-"""Pattern hooks registry -- extensible dispatch by sub_type.
-
-Each sub_type can register optional hook functions that customize
-pipeline behavior at specific divergence points. Unregistered sub_types
-fall through to default behavior (= comparacion).
-"""
+"""Pattern hooks registry."""
 
 from __future__ import annotations
 

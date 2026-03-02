@@ -1,10 +1,9 @@
 """Informe endpoints."""
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, Query
 
 from src.api.models import (
+    AddGraphsResponse,
     AddGraphsToInformeRequest,
     BulkOperationResponse,
     CreateInformeRequest,
@@ -14,6 +13,7 @@ from src.api.models import (
     InformeLabel,
     InformeSummary,
     OperationResponse,
+    RefreshInformeResponse,
     SuggestLabelsRequest,
     SuggestLabelsResponse,
     UpdateChartLabelRequest,
@@ -69,12 +69,12 @@ async def delete_informe(
     return OperationResponse(id=informe_id)
 
 
-@router.post("/{informe_id}/graphs", status_code=201)
+@router.post("/{informe_id}/graphs", response_model=AddGraphsResponse, status_code=201)
 async def add_graphs_to_informe(
     informe_id: str,
     request: AddGraphsToInformeRequest,
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
+) -> AddGraphsResponse:
     """Add one or more graphs to an informe."""
     svc = InformeService(settings)
     return await svc.add_graphs(informe_id, request.graph_ids, request.label_id)
@@ -95,17 +95,17 @@ async def remove_graph_from_informe(
     return OperationResponse(id=item_id)
 
 
-@router.patch("/{informe_id}/refresh")
+@router.post("/{informe_id}/refresh", response_model=RefreshInformeResponse)
 async def refresh_informe(
     informe_id: str,
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
+) -> RefreshInformeResponse:
     """Refresh all graphs in an informe by re-executing their stored queries."""
     svc = InformeService(settings)
     return await svc.refresh_informe(informe_id)
 
 
-@router.delete("/", response_model=BulkOperationResponse)
+@router.post("/bulk-delete", response_model=BulkOperationResponse)
 async def delete_informes_bulk(
     request: DeleteInformesRequest,
     settings: Settings = Depends(get_settings),

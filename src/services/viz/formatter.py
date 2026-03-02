@@ -1,4 +1,4 @@
-"""Pure-Python data-point formatter — no LLM needed."""
+"""Data-point formatter."""
 
 from __future__ import annotations
 
@@ -12,11 +12,7 @@ def build_data_points(
     sql_results: list[dict[str, Any]],
     mapping: VizColumnMapping,
 ) -> list[dict[str, Any]]:
-    """Build visualization data_points from SQL rows using the LLM column mapping.
-
-    This replaces the LLM's mechanical row-by-row formatting.
-    Runs in <100ms even for thousands of rows.
-    """
+    """Build visualization data_points from SQL rows using the column mapping."""
     points: list[dict[str, Any]] = []
     for row in sql_results:
         # When year and month are separate columns, combine them
@@ -51,12 +47,7 @@ def build_data_points(
 
 
 def _format_value(value: Any, fmt: str | None) -> str:
-    """Format a value according to the specified format.
-
-    Supports:
-    - ``YYYY-MM``: numeric or string date encoding (e.g. 202401 / "202401" → "2024-01")
-    - ``None``: plain string conversion
-    """
+    """Format a value according to the specified format."""
     if fmt == "YYYY-MM":
         try:
             v = int(value)

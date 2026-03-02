@@ -1,4 +1,4 @@
-"""Structured JSON logging for production."""
+"""Structured logging setup with JSON and console formatters."""
 
 import contextvars
 import json
@@ -10,19 +10,7 @@ from typing import Any
 
 
 class JSONFormatter(logging.Formatter):
-    """
-    Formats log records as JSON for structured logging.
-
-    Output format:
-    {
-        "timestamp": "2025-01-20T14:30:00.123456Z",
-        "level": "INFO",
-        "logger": "src.services.sql.executor",
-        "message": "SQL executed successfully",
-        "context": {...},  # optional extra data
-        "error": {...}     # optional error info
-    }
-    """
+    """Formats log records as single-line JSON."""
 
     def format(self, record: logging.LogRecord) -> str:
         log_data: dict[str, Any] = {
@@ -60,7 +48,7 @@ class JSONFormatter(logging.Formatter):
 
 
 class ConsoleFormatter(logging.Formatter):
-    """Human-readable console formatter for development."""
+    """Color-coded console formatter for development."""
 
     COLORS = {
         "DEBUG": "\033[36m",  # Cyan
@@ -95,14 +83,7 @@ def setup_logging(
     json_output: bool = True,
     silence_noisy_loggers: bool = True,
 ) -> None:
-    """
-    Configure application logging.
-
-    Args:
-        level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        json_output: If True, output JSON format. If False, human-readable console format.
-        silence_noisy_loggers: If True, reduce verbosity of third-party loggers.
-    """
+    """Configure root logger with JSON or console formatter."""
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, level.upper()))
 
@@ -139,7 +120,7 @@ def setup_logging(
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a logger with the given name."""
+    """Return a logger with the given name."""
     return logging.getLogger(name)
 
 
@@ -149,14 +130,7 @@ _log_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
 
 
 class LogContext:
-    """Context manager for adding context to log messages.
-
-    Thread-safe and async-safe using contextvars.
-
-    Usage:
-        with LogContext(request_id="abc123", user_id="user1"):
-            logger.info("Processing request")
-    """
+    """Context manager for adding structured context to log messages."""
 
     def __init__(self, **kwargs: Any):
         self.new_context = kwargs

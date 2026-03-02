@@ -1,4 +1,4 @@
-"""Async context manager for timing and logging pipeline steps."""
+"""Async context manager for timing pipeline steps."""
 
 import json
 import time
@@ -11,7 +11,7 @@ from src.infrastructure.logging.session_logger import SessionLogger
 
 
 class StepContext:
-    """Mutable context for a timed pipeline step."""
+    """Mutable context for a timed step."""
 
     def __init__(self) -> None:
         self.result: Any = None

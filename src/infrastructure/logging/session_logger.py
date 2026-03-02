@@ -1,4 +1,4 @@
-"""Session-based markdown logger."""
+"""Session-based agent response logger in Markdown format."""
 
 import json
 from datetime import datetime
@@ -7,17 +7,9 @@ from typing import Any
 
 
 class SessionLogger:
-    """
-    Logger that saves each agent's responses to markdown files.
-    """
+    """Saves per-agent responses to timestamped Markdown files."""
 
     def __init__(self, base_dir: str | None = None) -> None:
-        """
-        Initialize the logger.
-
-        Args:
-            base_dir: Base directory for logs. Defaults to 'logs' in the root.
-        """
         if base_dir:
             self.base_dir = Path(base_dir)
         else:
@@ -29,16 +21,7 @@ class SessionLogger:
         self.session_timestamp: str | None = None
 
     def start_session(self, user_id: str = "anonymous", user_message: str = "") -> str:
-        """
-        Start a new session by creating a timestamped directory.
-
-        Args:
-            user_id: User ID.
-            user_message: Original user message.
-
-        Returns:
-            Path of the session directory.
-        """
+        """Create a timestamped session directory and return its path."""
         self.session_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.session_dir = self.base_dir / self.session_timestamp
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +56,7 @@ Los archivos de respuesta de cada agente están en este directorio.
 
     @staticmethod
     def _md_section(title: str, content: str, lang: str = "") -> list[str]:
-        """Build a markdown section with a fenced code block."""
+        """Build a Markdown section with a fenced code block."""
         return [f"## {title}", "", f"```{lang}", content, "```", ""]
 
     def log_agent_response(
@@ -85,20 +68,7 @@ Los archivos de respuesta de cada agente están en este directorio.
         system_prompt: str | None = None,
         execution_time_ms: float | None = None,
     ) -> str:
-        """
-        Log an agent's response to a markdown file.
-
-        Args:
-            agent_name: Name of the agent.
-            raw_response: Raw response from the agent.
-            parsed_response: Parsed response (optional).
-            input_text: Input text sent to the agent (optional).
-            system_prompt: System prompt/instructions used by the agent (optional).
-            execution_time_ms: Execution time in milliseconds (optional).
-
-        Returns:
-            Path of the created file.
-        """
+        """Write an agent response to a numbered Markdown file and return its path."""
         if self.session_dir is None:
             raise RuntimeError("Session not started. Call start_session() first.")
 
@@ -144,14 +114,7 @@ Los archivos de respuesta de cada agente están en este directorio.
         final_message: str = "",
         errors: list[str] | None = None,
     ) -> None:
-        """
-        End the session by adding a summary.
-
-        Args:
-            success: Whether the workflow was successful.
-            final_message: Final workflow message.
-            errors: List of errors if any.
-        """
+        """Append a summary section to the session info file."""
         if not self.session_dir:
             return
 

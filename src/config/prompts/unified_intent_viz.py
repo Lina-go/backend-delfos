@@ -6,11 +6,7 @@ so both tasks can be completed in one LLM call.
 
 
 def build_unified_intent_viz_prompt() -> str:
-    """Build a combined prompt for intent classification + column mapping.
-
-    The LLM receives: question + SQL column names + sample rows + column_stats.
-    It returns: sub_type + chart metadata + column mapping — all in one JSON.
-    """
+    """Build a combined prompt for intent classification and column mapping."""
     return (
         "You are an expert financial data analyst and visualization mapper. "
         "You will receive a user's question about Colombian financial data, "
@@ -182,6 +178,33 @@ def build_unified_intent_viz_prompt() -> str:
         "category_column = null, series_name = null, category_name = null\n\n"
 
         # ================================================================
+        # PART 3: INDICATOR SELECTION
+        # ================================================================
+        "# PART 3: INDICATORS\n\n"
+
+        "Select KPI indicators for the chart. Python computes — you specify WHAT and label.\n\n"
+
+        "## Per-series calcs (set 'series' to name or null for single-series)\n"
+        "- `period_delta`: first-to-last change. Unit 'pp' for share, 'bps' for rates.\n"
+        "- `pct_change`: % growth ((last/first-1)*100). Unit '%' for balances.\n"
+        "- `prev_delta`: change vs previous period (same unit as period_delta).\n"
+        "- `momentum`: acceleration = recent slope minus initial slope. Needs 4+ points.\n\n"
+
+        "## Cross-series calcs (set series=null, Python picks best series)\n"
+        "- `max_change`: series with largest absolute change in the period.\n"
+        "- `rank_change`: series that moved most positions in ranking.\n"
+        "- `share_of_growth`: % of total growth captured by each series (only for absolute values).\n"
+        "- `growth_vs_market`: spread = entity growth minus market growth (pp).\n\n"
+
+        "## Rules\n"
+        "- Max 3 indicators. Each must reveal a different insight.\n"
+        "- tendencia_simple: [period_delta]. Add momentum if 4+ points.\n"
+        "- tendencia_comparada: prefer cross-series [share_of_growth, rank_change, max_change].\n"
+        "- valor_puntual / composicion / stacked_bar / scatter / bar: EMPTY list.\n"
+        "- For cross-series: always set series=null.\n"
+        "- For single-series: set series=null. For multi per-series: set series to name.\n\n"
+
+        # ================================================================
         # OUTPUT FORMAT
         # ================================================================
         "# OUTPUT\n\n"
@@ -201,7 +224,11 @@ def build_unified_intent_viz_prompt() -> str:
         '  "x_axis_name": "X axis label in Spanish",\n'
         '  "y_axis_name": "Y axis label in Spanish",\n'
         '  "series_name": "Series label in Spanish or null",\n'
-        '  "category_name": "Category label in Spanish or null"\n'
+        '  "category_name": "Category label in Spanish or null",\n'
+        '  "indicators": [\n'
+        '    {"label": "Label en espanol", "calc": "period_delta|pct_change|prev_delta|momentum|max_change|rank_change|share_of_growth|growth_vs_market", '
+        '"unit": "pp|bps|%|abs", "series": "series_name or null"}\n'
+        "  ]\n"
         "}\n"
         "```\n"
     )

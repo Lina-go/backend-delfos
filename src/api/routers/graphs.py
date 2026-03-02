@@ -6,6 +6,8 @@ from src.api.models import (
     BulkOperationResponse,
     DeleteGraphsRequest,
     Graph,
+    GraphBulletsRequest,
+    GraphBulletsResponse,
     OperationResponse,
     SaveGraphRequest,
 )
@@ -50,7 +52,7 @@ async def delete_graph(
     return OperationResponse(id=graph_id)
 
 
-@router.delete("/", response_model=BulkOperationResponse)
+@router.post("/bulk-delete", response_model=BulkOperationResponse)
 async def delete_graphs_bulk(
     request: DeleteGraphsRequest,
     settings: Settings = Depends(get_settings),
@@ -61,7 +63,7 @@ async def delete_graphs_bulk(
     return BulkOperationResponse(deleted_count=deleted_count)
 
 
-@router.patch("/{graph_id}/refresh")
+@router.post("/{graph_id}/refresh")
 async def refresh_graph(
     graph_id: str,
     settings: Settings = Depends(get_settings),
@@ -69,3 +71,14 @@ async def refresh_graph(
     """Re-execute a graph's stored query and regenerate its visualization."""
     svc = GraphService(settings)
     return await svc.refresh_graph(graph_id)
+
+
+@router.post("/bullets", response_model=GraphBulletsResponse)
+async def generate_bullets(
+    request: GraphBulletsRequest,
+    settings: Settings = Depends(get_settings),
+) -> GraphBulletsResponse:
+    """Generate a bullet point (max 15 words) for each graph in an informe."""
+    svc = GraphService(settings)
+    bullets = await svc.generate_bullets(request.informe_id)
+    return GraphBulletsResponse(informe_id=request.informe_id, bullets=bullets)

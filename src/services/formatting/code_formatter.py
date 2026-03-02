@@ -1,4 +1,4 @@
-"""Code-based response formatter (no LLM)."""
+"""Code-based response formatter."""
 
 import logging
 from typing import Any
@@ -15,15 +15,7 @@ class CodeFormatter:
 
     @staticmethod
     def format(state: PipelineState) -> dict[str, Any]:
-        """
-        Format final response from pipeline state using code.
-
-        Args:
-            state: Pipeline state object
-
-        Returns:
-            Formatted response dictionary
-        """
+        """Format final response from pipeline state."""
         try:
             return build_response(
                 patron=state.pattern_type or QueryType.GENERAL,
@@ -39,6 +31,8 @@ class CodeFormatter:
                 series_name=state.series_name,
                 category_name=state.category_name,
                 is_tasa=state.is_tasa,
+                indicators=state.indicators,
+                indicator_specs=state.indicator_specs,
                 link_power_bi=state.powerbi_url,
                 insight=state.sql_insights or state.sql_resumen or "No insight available",
                 sql_query=state.sql_query,

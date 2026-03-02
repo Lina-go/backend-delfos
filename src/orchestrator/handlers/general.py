@@ -1,4 +1,4 @@
-"""General question handler using LLM."""
+"""General question handler."""
 
 import logging
 from typing import Any
@@ -13,14 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 class GeneralHandler:
-    """Handles general questions about the system using LLM."""
+    """Handles general questions about the system via LLM."""
 
     def __init__(self, settings: Settings):
-        """Initialize handler with settings."""
         self.settings = settings
 
     async def handle(self, message: str) -> dict[str, Any]:
-        """Handle a general question using LLM."""
+        """Handle a general question via LLM."""
         try:
             system_prompt = self._build_system_prompt()
 
@@ -42,5 +41,5 @@ class GeneralHandler:
             )
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt for general questions."""
+        """Build the system prompt for general questions."""
         return GENERAL_HANDLER_PROMPT

@@ -1,4 +1,4 @@
-"""Clarification handler - asks the user for more details when the query is ambiguous."""
+"""Clarification handler for ambiguous queries."""
 
 import logging
 from typing import Any
@@ -41,13 +41,13 @@ Tienes acceso a datos sobre:
 
 
 class ClarificationHandler:
-    """Handles ambiguous queries by asking the user for clarification."""
+    """Asks the user for clarification on ambiguous queries."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
 
     async def handle(self, message: str, conversation_history: str = "") -> dict[str, Any]:
-        """Generate a clarification question for an ambiguous query."""
+        """Generate a clarification question via LLM."""
         try:
             prompt = message
             if conversation_history:

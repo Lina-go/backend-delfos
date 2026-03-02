@@ -1,4 +1,4 @@
-"""In-memory session store for Chat V2 agent threads with DB persistence."""
+"""Chat V2 session store."""
 
 import json
 import logging
@@ -31,7 +31,7 @@ class ChatV2Session:
 
 
 class ChatV2SessionStore:
-    """In-memory session cache backed by DB persistence in dbo.ChatV2Sessions."""
+    """In-memory session cache with DB persistence."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, ChatV2Session] = {}

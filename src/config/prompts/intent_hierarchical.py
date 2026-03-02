@@ -1,11 +1,4 @@
-"""
-Hierarchical intent classification prompt -- 2-step approach.
-
-Step 1: Is it temporal or static?
-Step 2: Which sub-type within that group?
-
-Replaces the monolithic A-K archetype prompt with clearer, smaller decisions.
-"""
+"""Hierarchical intent classification prompt (2-step: temporal/static then sub-type)."""
 
 from src.config.constants import Intent
 

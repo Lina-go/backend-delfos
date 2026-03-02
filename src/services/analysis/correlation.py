@@ -1,4 +1,4 @@
-"""Correlation and relationship statistics for scatter analysis."""
+"""Correlation and relationship statistics."""
 
 from __future__ import annotations
 
@@ -32,15 +32,7 @@ def _classify_direction(r: float) -> str:
 
 
 def compute_relationship_stats(data_points: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compute correlation, trend line, and outlier statistics.
-
-    Args:
-        data_points: List of dicts with 'x_value' and 'y_value' keys (numeric).
-
-    Returns:
-        Dict with r, r2, direction, strength, n, slope, intercept, outliers.
-        On error (e.g., insufficient data), returns dict with 'warning' key.
-    """
+    """Compute correlation, trend line, and outlier statistics."""
     try:
         x = np.array([float(p["x_value"]) for p in data_points], dtype=float)
         y = np.array([float(p["y_value"]) for p in data_points], dtype=float)

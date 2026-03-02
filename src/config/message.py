@@ -1,6 +1,4 @@
-"""
-User-facing messages for the NL2SQL pipeline.
-"""
+"""User-facing messages for the NL2SQL pipeline."""
 
 from src.config.constants import QueryType
 

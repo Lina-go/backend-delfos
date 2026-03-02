@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from src.api.models import ChatRequest, ChatResponse, HealthResponse
+from src.api.models import ChatRequest, ChatResponse
 from src.config.settings import Settings, get_settings
 from src.orchestrator.pipeline import PipelineOrchestrator
 
@@ -59,7 +59,3 @@ async def chat_stream(
     )
 
 
-@router.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
-    """Health check."""
-    return HealthResponse(status="healthy", version="0.1.0")

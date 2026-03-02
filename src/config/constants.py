@@ -1,10 +1,4 @@
-"""
-Constants, enums, and static values.
-
-Naming convention:
-  Domain terms use Spanish (resultados, resumen, arquetipo, informes).
-  Technical terms use English (cache, pipeline, verify).
-"""
+"""Constants, enums, and static values."""
 
 from enum import Enum
 

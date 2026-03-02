@@ -1,4 +1,4 @@
-"""Intent service models -- with sub_type as primary classification field."""
+"""Intent service models."""
 
 from pydantic import BaseModel, field_validator
 
@@ -6,13 +6,7 @@ from src.config.constants import Intent
 
 
 class IntentResult(BaseModel):
-    """Result from intent classification.
-
-    `sub_type` is the primary classification field.
-    Legacy fields (tipo_patron, arquetipo, temporality, subject_cardinality)
-    are preserved for backward compatibility and are auto-populated from sub_type
-    when not explicitly set.
-    """
+    """Result from intent classification."""
 
     user_question: str
     intent: Intent

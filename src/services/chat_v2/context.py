@@ -1,4 +1,4 @@
-"""Schema context provider for the Chat V2 agent."""
+"""Chat V2 schema context provider."""
 
 import json
 from collections.abc import MutableSequence
@@ -8,7 +8,7 @@ from agent_framework import ChatMessage, Context, ContextProvider
 
 
 class SchemaContextProvider(ContextProvider):
-    """Injects available table schemas as dynamic instructions before each model call."""
+    """Injects table schemas as dynamic instructions."""
 
     def __init__(self, schema_context: dict[str, Any] | None = None) -> None:
         self._schema_context = schema_context or {}

@@ -1,4 +1,4 @@
-"""Shared utility for resolving agent tools."""
+"""Agent tool resolution utility."""
 
 import logging
 from typing import Any
@@ -11,15 +11,7 @@ def resolve_agent_tools(
     *,
     context: str = "",
 ) -> Any | None:
-    """Resolve which tools to pass to an agent.
-
-    Args:
-        db_tools: DelfosTools instance (direct DB access).
-        context: Label for log messages (e.g. "triage", "sql_generation").
-
-    Returns:
-        Tools list/object to pass to the agent, or None.
-    """
+    """Return exploration tools from db_tools, or None."""
     if db_tools is not None:
         logger.info("Using direct DB tools%s", f" for {context}" if context else "")
         return db_tools.get_exploration_tools()

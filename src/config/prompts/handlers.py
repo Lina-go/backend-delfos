@@ -1,6 +1,4 @@
-"""
-Handler prompt templates for general and follow-up queries.
-"""
+"""Handler prompt templates for general and follow-up queries."""
 
 
 GENERAL_HANDLER_PROMPT = """Eres Delfos, un asistente experto en datos financieros del sistema financiero colombiano.

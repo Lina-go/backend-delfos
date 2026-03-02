@@ -20,7 +20,6 @@ class ResultVerifier:
     """Verifies that SQL results make sense."""
 
     def __init__(self, settings: Settings):
-        """Initialize result verifier."""
         self.settings = settings
 
     async def verify(
@@ -30,20 +29,7 @@ class ResultVerifier:
         question: str = "",
         execution_error: str | None = None,
     ) -> VerificationResult:
-        """
-        Verify SQL results.
-
-        Uses LLM verification if `use_llm_verification=True`, otherwise uses code-based validation.
-
-        Args:
-            results: SQL query results
-            sql: SQL query that was executed
-            question: Original user question (required for LLM verification)
-            execution_error: Error message from SQL execution (if any)
-
-        Returns:
-            VerificationResult with passed status and feedback
-        """
+        """Verify SQL results using LLM or code-based validation."""
         # Execution errors are always handled by code-based verification
         if execution_error:
             return await self._verify_with_code(results, sql, question, execution_error)

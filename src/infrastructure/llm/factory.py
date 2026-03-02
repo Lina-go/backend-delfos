@@ -1,4 +1,4 @@
-"""Agent factory helpers."""
+"""Agent factory for Azure AI and Anthropic backends."""
 
 import logging
 import os
@@ -16,22 +16,11 @@ from src.config.settings import Settings
 logger = logging.getLogger(__name__)
 
 _shared_credential: AsyncTokenCredential | None = None
+_shared_anthropic_client: Any = None
 
 
 def get_shared_credential(settings: Settings | None = None) -> AsyncTokenCredential:
-    """
-    Return the shared async credential singleton, creating it on first call.
-
-    The credential type is determined once and reused for the lifetime of the
-    process.  When *settings* has ``use_service_principal=True``, a
-    ``ClientSecretCredential`` is created; otherwise a
-    ``DefaultAzureCredential`` is used.
-
-    Note:
-        Subsequent calls ignore *settings* because the credential is already
-        initialised.  If the caller expects a different credential type, a
-        warning is logged.
-    """
+    """Return the shared async credential singleton, creating it on first call."""
     global _shared_credential
     if _shared_credential is not None:
         if settings and settings.use_service_principal and isinstance(_shared_credential, DefaultAzureCredential):
@@ -60,18 +49,19 @@ def get_shared_credential(settings: Settings | None = None) -> AsyncTokenCredent
 
 
 async def close_shared_credential() -> None:
-    """
-    Close and discard the shared credential singleton.
-
-    Safe to call with both ``DefaultAzureCredential`` and
-    ``ClientSecretCredential`` -- both implement ``close()`` via the
-    ``AsyncTokenCredential`` protocol.  Should be called during
-    application shutdown.
-    """
+    """Close and discard the shared credential singleton."""
     global _shared_credential
     if _shared_credential is not None:
         await _shared_credential.close()
         _shared_credential = None
+
+
+async def close_shared_anthropic_client() -> None:
+    """Close and discard the shared Anthropic HTTP client."""
+    global _shared_anthropic_client  # noqa: PLW0603
+    if _shared_anthropic_client is not None:
+        await _shared_anthropic_client.close()
+        _shared_anthropic_client = None
 
 
 def is_anthropic_model(model: str) -> bool:
@@ -86,11 +76,7 @@ async def azure_agent_client(
     credential: AsyncTokenCredential,
     max_iterations: int = 5,
 ) -> Any:
-    """
-    Azure AI (Foundry) agent client as context manager.
-
-    The `model` argument must be the deployment name configured in your project.
-    """
+    """Yield a configured Azure AI Foundry agent client."""
     async with AzureAIAgentClient(
         project_endpoint=settings.azure_ai_project_endpoint,
         model_deployment_name=model,
@@ -102,20 +88,44 @@ async def azure_agent_client(
         yield client
 
 
-def _build_anthropic_client(settings: Settings, model: str) -> AnthropicClient:
-    """Build the appropriate AnthropicClient based on settings."""
+def warmup_anthropic_client(settings: Settings) -> None:
+    """Pre-initialize the shared Anthropic HTTP client. Called once at startup."""
+    _get_shared_anthropic_http_client(settings)
+
+
+def _get_shared_anthropic_http_client(settings: Settings) -> Any:
+    """Return a singleton Anthropic HTTP client (direct or Foundry).
+
+    Sharing the underlying HTTP client across AnthropicClient instances
+    reuses TCP/TLS connections, avoiding cold-start handshake on each request.
+    """
+    global _shared_anthropic_client  # noqa: PLW0603
+    if _shared_anthropic_client is not None:
+        return _shared_anthropic_client
+
     if settings.use_anthropic_api_for_claude:
         if not settings.anthropic_api_key:
             raise ValueError("use_anthropic_api_for_claude is True but ANTHROPIC_API_KEY is not set")
-        return AnthropicClient(model_id=model, api_key=settings.anthropic_api_key)
+        from anthropic import AsyncAnthropic
+        _shared_anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        logger.info("Shared Anthropic HTTP client created (direct API)")
+    else:
+        foundry_api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY") or settings.anthropic_foundry_api_key
+        foundry_resource = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or settings.anthropic_foundry_resource
+        if not foundry_api_key:
+            raise ValueError("ANTHROPIC_FOUNDRY_API_KEY is required.")
+        _shared_anthropic_client = AsyncAnthropicFoundry(
+            api_key=foundry_api_key, resource=foundry_resource,
+        )
+        logger.info("Shared Anthropic HTTP client created (Foundry)")
 
-    foundry_api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY") or settings.anthropic_foundry_api_key
-    foundry_resource = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or settings.anthropic_foundry_resource
-    if not foundry_api_key:
-        raise ValueError("ANTHROPIC_FOUNDRY_API_KEY is required. Set it in environment variables or .env file.")
+    return _shared_anthropic_client
 
-    foundry_client = AsyncAnthropicFoundry(api_key=foundry_api_key, resource=foundry_resource)
-    return AnthropicClient(anthropic_client=foundry_client, model_id=model)
+
+def _build_anthropic_client(settings: Settings, model: str) -> AnthropicClient:
+    """Build an AnthropicClient reusing the shared HTTP connection pool."""
+    shared = _get_shared_anthropic_http_client(settings)
+    return AnthropicClient(anthropic_client=shared, model_id=model)
 
 
 def create_claude_agent(
@@ -127,7 +137,7 @@ def create_claude_agent(
     max_tokens: int = 8192,
     response_format: Any | None = None,
 ) -> Any:
-    """Create a Claude agent using the appropriate backend (direct API or Foundry)."""
+    """Create a Claude agent via direct API or Foundry."""
     final_model = model or settings.sql_agent_model
     logger.debug("Creating Claude agent '%s' with model: %s", name, final_model)
 

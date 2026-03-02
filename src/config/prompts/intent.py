@@ -1,6 +1,4 @@
-"""
-Intent classification agent system prompts.
-"""
+"""Intent classification agent system prompts."""
 
 from src.config.archetypes import get_archetypes_by_pattern_type
 from src.config.constants import Intent, PatternType

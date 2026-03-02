@@ -1,4 +1,4 @@
-"""SQL generation, validation, execution and verification flow with retry."""
+"""SQL generation, validation, execution and verification flow."""
 
 import json
 import logging
@@ -30,12 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class SQLFlowOrchestrator:
-    """Orchestrate the SQL generation, execution and verification cycle.
-
-    Encapsulates retry logic for both SQL validation (inside generation) and
-    post-execution verification so that callers (sync *process* and streaming
-    *process_stream*) do not need to duplicate it.
-    """
+    """Orchestrate SQL generation, execution, and verification with retries."""
 
     def __init__(
         self,
@@ -61,7 +56,7 @@ class SQLFlowOrchestrator:
         db_tools: DelfosTools | None = None,
         hooks: PatternHooks | None = None,
     ) -> dict[str, Any] | None:
-        """Run SQL gen → exec → verify with retries.  Return error dict or None on success."""
+        """Run SQL gen, exec, verify with retries. Return error dict or None on success."""
         async for event in self._run(state, message, db_tools=db_tools, hooks=hooks):
             if event.get("step") == "sql_generation" and event.get("result", {}).get("error"):
                 result: dict[str, Any] = event["result"]
@@ -76,7 +71,7 @@ class SQLFlowOrchestrator:
         db_tools: DelfosTools | None = None,
         hooks: PatternHooks | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Same as *execute* but yields step events for SSE streaming."""
+        """Yield step events for SSE streaming."""
         async for event in self._run(state, message, db_tools=db_tools, hooks=hooks):
             yield event
 
@@ -176,7 +171,7 @@ class SQLFlowOrchestrator:
         db_tools: DelfosTools | None = None,
         hooks: PatternHooks | None = None,
     ) -> dict[str, Any]:
-        """SQL generation with validation retry loop."""
+        """Generate SQL with validation retry loop."""
         log_pipeline_step(PipelineStep.SQL_GENERATION)
         sql_result: dict[str, Any] = {}
         validation_errors: list[str] | None = None

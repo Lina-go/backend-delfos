@@ -1,6 +1,4 @@
-"""
-Retry utilities for handling rate limits and transient errors.
-"""
+"""Retry utilities for rate limits and transient errors."""
 
 import asyncio
 import logging
@@ -26,12 +24,7 @@ _TRANSIENT_SQLSTATES: frozenset[str] = frozenset({
 
 
 def is_transient_pyodbc_error(exception: Exception) -> bool:
-    """Check if a pyodbc.Error is transient and worth retrying.
-
-    Extracts the SQLSTATE from exception.args[0] and checks it against
-    the known set of transient error codes. Returns False for permanent
-    errors like 42S02 (table not found), 42000 (syntax error), etc.
-    """
+    """Return True if the pyodbc error SQLSTATE indicates a transient failure."""
     if not isinstance(exception, pyodbc.Error):
         return False
     if exception.args and isinstance(exception.args[0], str):
@@ -50,22 +43,7 @@ async def run_with_retry(
     backoff_factor: float = 2.0,
     retry_on_rate_limit: bool = True,
 ) -> Any:
-    """
-    Execute an async function with retry logic for rate limit and transient errors.
-
-    Args:
-        func: Async function to execute (no parameters)
-        max_retries: Maximum number of retry attempts
-        initial_delay: Initial delay in seconds before first retry
-        backoff_factor: Multiplier for delay between retries
-        retry_on_rate_limit: Whether to retry on rate limit errors
-
-    Returns:
-        Result from the function
-
-    Raises:
-        Exception: If max retries exceeded or non-retryable error occurs
-    """
+    """Execute an async function with exponential backoff on transient errors."""
     last_exception = None
 
     for attempt in range(max_retries):

@@ -15,7 +15,6 @@ class TriageClassifier:
     """Classifies queries into data_question, general, out_of_scope, follow_up, etc."""
 
     def __init__(self, settings: Settings):
-        """Initialize triage classifier."""
         self.settings = settings
 
     async def classify(
@@ -26,19 +25,7 @@ class TriageClassifier:
         conversation_history: str | None = None,
         db_tools: Any | None = None,
     ) -> dict[str, Any]:
-        """
-        Classify a user message.
-
-        Args:
-            message: User's natural language question
-            has_context: Whether the user has previous conversation data
-            context_summary: Summary of what data is available in context
-            conversation_history: Formatted conversation history
-            db_tools: Unused, kept for interface compatibility
-
-        Returns:
-            Dictionary with query_type and reasoning
-        """
+        """Classify a user message into query_type categories."""
         try:
             system_prompt = build_triage_system_prompt(
                 has_context=has_context,

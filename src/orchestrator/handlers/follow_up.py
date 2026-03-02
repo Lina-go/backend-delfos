@@ -1,4 +1,4 @@
-"""Follow-up handler for Delfos NL2SQL Pipeline."""
+"""Follow-up question handler."""
 
 import json
 import logging
@@ -17,13 +17,13 @@ MAX_RESULTS_IN_CONTEXT = 500
 
 
 class FollowUpHandler:
-    """Handles follow-up questions using conversation context."""
+    """Answers follow-up questions using conversation context."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
 
     async def handle(self, message: str, context: ConversationContext) -> dict[str, Any]:
-        """Handle follow-up question using previous context."""
+        """Handle a follow-up question using previous context."""
         if not context.last_results:
             return self._no_context_response()
 
@@ -39,7 +39,7 @@ class FollowUpHandler:
         )
 
     def _build_prompt(self, message: str, context: ConversationContext) -> str:
-        """Build prompt with full conversation context."""
+        """Build the LLM prompt with conversation context."""
         results_to_include = (
             context.last_results[:MAX_RESULTS_IN_CONTEXT] if context.last_results else []
         )
@@ -73,7 +73,7 @@ class FollowUpHandler:
         )
 
     async def _call_llm(self, prompt: str) -> str:
-        """Make LLM call for follow-up response."""
+        """Call the LLM for a follow-up response."""
         try:
             result = await run_handler_agent(
                 self.settings,
@@ -92,7 +92,7 @@ class FollowUpHandler:
             return f"Error procesando la pregunta: {str(e)}"
 
     def _no_context_response(self) -> dict[str, Any]:
-        """Response when there's no previous context."""
+        """Build response when no previous context exists."""
         return build_response(
             patron="follow_up",
             arquetipo="NA",

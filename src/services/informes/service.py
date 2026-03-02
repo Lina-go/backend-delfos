@@ -147,7 +147,7 @@ class InformeService:
             self.settings,
             """
             SELECT pi.id AS item_id, g.id AS graph_id, g.type, g.content, g.title, g.query,
-                   g.createdAt AS created_at, pi.label_id, l.name AS label_name
+                   g.createdAt AS created_at, pi.label_id, l.name AS label_name, g.bullet
             FROM dbo.ProjectItems pi
             INNER JOIN dbo.Graphs g ON pi.graph_id = g.id
             LEFT JOIN dbo.InformeLabels l ON pi.label_id = l.id

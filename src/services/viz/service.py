@@ -26,12 +26,6 @@ class VisualizationService:
     })
 
     def __init__(self, settings: Settings, db_tools: DelfosTools | None = None):
-        """Initialize visualization service.
-
-        Args:
-            settings: Application settings
-            db_tools: Optional DelfosTools instance for direct DB access
-        """
         self.settings = settings
         self.db_tools = db_tools
 
@@ -48,10 +42,7 @@ class VisualizationService:
         sub_type: str | None = None,
         column_stats: dict[str, Any] | None = None,
     ) -> VizColumnMapping | None:
-        """Get column mapping from LLM using column names, sample rows, and column stats.
-
-        Returns VizColumnMapping on success, None on failure.
-        """
+        """Get column mapping from LLM for visualization."""
         try:
             input_dict: dict[str, Any] = {
                 "columns": columns,
@@ -105,11 +96,7 @@ class VisualizationService:
         build_data_points_hook: Callable[..., list[dict[str, Any]]] | None = None,
         precomputed_mapping: VizColumnMapping | None = None,
     ) -> dict[str, Any]:
-        """Generate visualization for SQL results (full flow).
-
-        Kept for backward compatibility (refresh_graph).
-        New code should use get_mapping() + build_data_points() separately.
-        """
+        """Generate visualization for SQL results (full flow)."""
         if not sql_results:
             return self._error_result("No SQL results to visualize")
 

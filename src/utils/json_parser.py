@@ -1,4 +1,4 @@
-"""JSON Parser utility for extracting JSON from LLM responses."""
+"""JSON extraction from LLM responses."""
 
 import json
 import logging
@@ -9,11 +9,11 @@ logger = logging.getLogger(__name__)
 
 
 class JSONParser:
-    """Helper class to extract clean JSON from LLM responses."""
+    """Extracts JSON objects from mixed LLM output text."""
 
     @staticmethod
     def _try_parse(text: str) -> dict[str, Any] | None:
-        """Try to parse text as a JSON dict. Returns None on failure."""
+        """Parse text as a JSON dict, returning None on failure."""
         try:
             data = json.loads(text)
             if isinstance(data, dict):
@@ -24,7 +24,7 @@ class JSONParser:
 
     @staticmethod
     def _extract_first_json_object(text: str) -> dict[str, Any] | None:
-        """Extract the first complete JSON object from text using balanced brace matching."""
+        """Extract the first balanced JSON object from text."""
         brace_count = 0
         start_idx = -1
         in_string = False
@@ -58,7 +58,7 @@ class JSONParser:
 
     @staticmethod
     def _try_code_block(text: str) -> dict[str, Any] | None:
-        """Try to extract JSON from a markdown code block."""
+        """Extract JSON from a Markdown fenced code block."""
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if match:
             return JSONParser._try_parse(match.group(1))
@@ -66,10 +66,7 @@ class JSONParser:
 
     @staticmethod
     def extract_json(text: str) -> dict[str, Any]:
-        """Attempts to extract a JSON object from text.
-
-        If no valid JSON object can be extracted, returns an empty dict.
-        """
+        """Extract a JSON object from text, returning ``{}`` if none found."""
         # Try pure JSON first
         result = JSONParser._try_parse(text)
         if result is not None:

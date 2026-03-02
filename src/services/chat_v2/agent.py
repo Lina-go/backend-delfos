@@ -1,4 +1,4 @@
-"""Chat V2 agent — single-agent architecture with multi-turn memory."""
+"""Chat V2 agent."""
 
 import asyncio
 import json
@@ -13,7 +13,7 @@ from agent_framework.exceptions import ServiceResponseException
 from src.infrastructure.llm.factory import _build_anthropic_client
 
 from src.config.settings import Settings
-from src.infrastructure.cache.semantic_cache_v2 import SemanticCacheV2
+from src.infrastructure.cache.semantic_cache_v2 import SemanticCacheV2, _extract_sql_tables
 from src.infrastructure.database.connection import FabricConnectionFactory
 from src.infrastructure.database.tools import DelfosTools
 from src.services.chat_v2.context import SchemaContextProvider
@@ -85,30 +85,40 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return False
 
 
-import re
+def _is_invalid_message_error(exc: Exception) -> bool:
+    """Check if the error is due to malformed message structure (corrupted thread)."""
+    if isinstance(exc, anthropic.BadRequestError):
+        msg = str(exc).lower()
+        return "tool_use" in msg or "tool_result" in msg or "invalid_request_error" in msg
+    return False
 
-_GREETING_RE = re.compile(
-    r"^(hola|hi|hello|buenos?\s*d[ií]as?|buenas?\s*(tardes?|noches?)|hey|saludos|qu[eé]\s*tal|gracias|chao|adi[oó]s)\b",
-    re.IGNORECASE,
-)
+
+def _resolve_tool_choice(_message: str) -> str:
+    """Always 'auto' — the LLM decides whether to use tools or just reply."""
+    return "auto"
 
 
-def _resolve_tool_choice(message: str) -> str:
-    """Return tool_choice for the given message.
+def _is_thread_valid(thread: AgentThread) -> bool:
+    """Validate that the thread's message structure is compatible with Anthropic API.
 
-    ``"required"`` for data questions (forces the tool call on iteration 0).
-    ``"auto"`` for greetings/short non-questions (lets LLM respond directly).
-
-    The infinite-loop problem is solved by ``max_iterations=1`` on the client's
-    ``FunctionInvocationConfiguration``: after 1 iteration the framework's
-    failsafe switches to ``tool_choice="none"`` for the final text response.
+    Checks that tool_use blocks only appear in assistant messages and that
+    tool_result blocks only appear in tool/user messages. Returns False if
+    the structure is corrupted (e.g., after a bad compaction or migration).
     """
-    msg = message.strip()
-    if len(msg) < 30 and _GREETING_RE.search(msg):
-        return "auto"
-    if len(msg) < 15 and "?" not in msg:
-        return "auto"
-    return "required"
+    store = thread.message_store
+    if store is None:
+        return True
+    for msg in store.messages:
+        role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+        for content in msg.contents or []:
+            content_type = getattr(content, "type", None)
+            # tool_use blocks must be in assistant messages only
+            if content_type == "tool_use" and role != "assistant":
+                return False
+            # tool_result blocks must NOT be in assistant messages
+            if content_type == "tool_result" and role == "assistant":
+                return False
+    return True
 
 
 def _get_delfos_tools(settings: Settings) -> DelfosTools:
@@ -126,6 +136,18 @@ def _get_delfos_tools(settings: Settings) -> DelfosTools:
             report_id=settings.powerbi_report_id,
         )
     return _delfos_tools
+
+
+def warmup_tools(settings: Settings) -> DelfosTools:
+    """Pre-initialize the DelfosTools singleton. Called once at startup."""
+    return _get_delfos_tools(settings)
+
+
+def warmup_cache(settings: Settings) -> None:
+    """Pre-initialize the SemanticCache singleton and warm the embedding model."""
+    cache = _get_semantic_cache(settings)
+    if cache:
+        cache.embed("warmup")
 
 
 async def _save_session_bg(
@@ -147,17 +169,14 @@ class ChatV2Agent:
     def _create_agent_with_provider(
         self, context_provider: SchemaContextProvider
     ) -> tuple[ChatAgent, dict]:
-        """Create a ChatAgent wired to the given context provider.
-
-        Returns (agent, result_holder) where result_holder is a mutable dict
-        shared with the tools to capture viz/clarification results.
-        """
+        """Create a ChatAgent wired to the given context provider."""
         client = _build_anthropic_client(
             self.settings, self.settings.chat_v2_agent_model
         )
-        # 1 tool call (required → one of the tools), then failsafe(none) → text
+        # 2 iterations: if first tool call fails (0 rows, SQL error), agent can
+        # retry or call request_clarification. Idempotent guard prevents double clarification.
         client.function_invocation_configuration = FunctionInvocationConfiguration(
-            max_iterations=1
+            max_iterations=2
         )
         tools, result_holder = create_chat_v2_tools(
             _get_delfos_tools(self.settings), self.settings
@@ -187,16 +206,31 @@ class ChatV2Agent:
         saved_state = await _session_store.load_from_db(self.settings, user_id)
         if saved_state is not None:
             logger.info("Restoring ChatV2 session from DB for %s", user_id)
-            thread = await agent.deserialize_thread(saved_state)
-            # Old Azure OpenAI sessions have a service_thread_id that is
-            # incompatible with AnthropicClient (stateless).  Discard and
-            # start fresh so the framework doesn't crash.
-            if thread.service_thread_id is not None:
+            try:
+                thread = await agent.deserialize_thread(saved_state)
+                # Old Azure OpenAI sessions have a service_thread_id that is
+                # incompatible with AnthropicClient (stateless).  Discard and
+                # start fresh so the framework doesn't crash.
+                if thread.service_thread_id is not None:
+                    logger.warning(
+                        "Discarding incompatible service-managed thread for %s",
+                        user_id,
+                    )
+                    thread = agent.get_new_thread()
+                elif not _is_thread_valid(thread):
+                    logger.warning(
+                        "Discarding corrupted thread for %s (invalid message structure)",
+                        user_id,
+                    )
+                    thread = agent.get_new_thread()
+                    await _session_store.delete_from_db(self.settings, user_id)
+            except Exception as e:
                 logger.warning(
-                    "Discarding incompatible service-managed thread for %s",
-                    user_id,
+                    "Failed to deserialize thread for %s: %s — starting fresh",
+                    user_id, e,
                 )
                 thread = agent.get_new_thread()
+                await _session_store.delete_from_db(self.settings, user_id)
         else:
             thread = agent.get_new_thread()
 
@@ -216,14 +250,32 @@ class ChatV2Agent:
 
         if action == "hard":
             pre_built = _session_store.consume_pending_summary(user_id)
-            logger.info(
-                "[COMPACTION] Hard threshold (%d msgs). Pre-built: %s",
-                message_count, "YES" if pre_built else "NO",
-            )
-            await compact_thread(self.settings, thread, pre_built_summary=pre_built)
+            if pre_built:
+                # Pre-built summary available → apply instantly (no LLM call)
+                logger.info(
+                    "[COMPACTION] Hard threshold (%d msgs). Applying pre-built summary.",
+                    message_count,
+                )
+                await compact_thread(self.settings, thread, pre_built_summary=pre_built)
+            else:
+                # No pre-built summary → generate in background, skip compaction
+                # this turn. Next turn will find the pre-built summary and compact
+                # instantly.
+                logger.info(
+                    "[COMPACTION] Hard threshold (%d msgs) — no pre-built summary. "
+                    "Generating in background for next turn.",
+                    message_count,
+                )
+                session = _session_store.get(user_id)
+                if session and (session.bg_summary_task is None or session.bg_summary_task.done()):
+                    session.bg_summary_task = asyncio.create_task(
+                        self._build_summary_bg(user_id, list(store.messages))
+                    )
         elif action == "soft":
             session = _session_store.get(user_id)
-            if session and (session.bg_summary_task is None or session.bg_summary_task.done()):
+            if session and not session.pending_summary and (
+                session.bg_summary_task is None or session.bg_summary_task.done()
+            ):
                 logger.info(
                     "[COMPACTION] Soft threshold (%d msgs). Starting background summary.",
                     message_count,
@@ -248,15 +300,22 @@ class ChatV2Agent:
 
     async def chat(self, user_id: str, message: str) -> str:
         """Send a message and return the full response."""
-        # --- Semantic cache lookup (only for data queries) ---
+        # --- Semantic cache lookup + session load in parallel ---
         cache = _get_semantic_cache(self.settings)
         embedding: list[float] | None = None
-        is_data_query = _resolve_tool_choice(message) == "required"
+        is_data_query = True
 
+        embed_task = None
         if cache and is_data_query:
+            embed_task = asyncio.create_task(cache.embed_async(message))
+
+        agent, thread, result_holder = await self._prepare_agent_and_thread(user_id)
+        await self._maybe_compact(user_id, thread)
+
+        if embed_task is not None:
             try:
-                embedding = cache.embed(message)
-                cached_result, score = cache.search(embedding)
+                embedding = await embed_task
+                cached_result, score = cache.search(embedding, query_text=message)
                 if cached_result is not None:
                     logger.info(
                         "[SEMANTIC CACHE] HIT (score=%.3f) for: %s", score, message[:60],
@@ -264,9 +323,6 @@ class ChatV2Agent:
                     return cached_result.get("text", "")
             except Exception:
                 logger.warning("Semantic cache lookup failed", exc_info=True)
-
-        agent, thread, result_holder = await self._prepare_agent_and_thread(user_id)
-        await self._maybe_compact(user_id, thread)
 
         # Determine the cache key: original question from Turn 1 if this is
         # a clarification response, otherwise the current message.
@@ -293,10 +349,31 @@ class ChatV2Agent:
                     await asyncio.sleep(wait)
                     last_exc = exc
                     continue
+                # Corrupted thread → reset session and retry once
+                if _is_invalid_message_error(exc) and attempt == 0:
+                    logger.warning(
+                        "Corrupted thread detected for user=%s, resetting session: %s",
+                        user_id, exc,
+                    )
+                    thread = agent.get_new_thread()
+                    _session_store.set(
+                        user_id, thread, agent=agent,
+                        result_holder=result_holder,
+                    )
+                    await _session_store.delete_from_db(self.settings, user_id)
+                    continue
+                # SSE parse error (malformed JSON from API) → retry
+                if isinstance(exc, json.JSONDecodeError) and attempt < _RATE_LIMIT_MAX_RETRIES:
+                    logger.warning(
+                        "SSE parse error on attempt %d, retrying: %s",
+                        attempt + 1, exc,
+                    )
+                    last_exc = exc
+                    continue
                 logger.exception("agent.run() failed for user=%s", user_id)
                 raise
         else:
-            logger.error("All %d rate-limit retries exhausted", _RATE_LIMIT_MAX_RETRIES)
+            logger.error("All %d retries exhausted", _RATE_LIMIT_MAX_RETRIES)
             raise last_exc  # type: ignore[misc]
 
         response_text = str(response.text)
@@ -312,6 +389,7 @@ class ChatV2Agent:
                         question=cache_key_question,
                         result={"text": response_text, "viz_data": viz},
                         embedding=cache_embedding,
+                        sql_tables=_extract_sql_tables(viz.get("sql_query", "")),
                     )
                 except Exception:
                     logger.warning("Semantic cache store failed", exc_info=True)
@@ -327,37 +405,36 @@ class ChatV2Agent:
     async def chat_stream(
         self, user_id: str, message: str
     ) -> AsyncIterator[str]:
-        """Stream response tokens, persisting the thread after completion.
-
-        After all text chunks, yields sentinel-prefixed chunks for:
-        - ``__CLARIFICATION__`` — when the agent asked for temporal clarification
-        - ``__VIZ_DATA__`` — when execute_and_visualize produced visualization data
-
-        The SSE router splits on these sentinels to emit dedicated events,
-        guaranteeing the frontend receives structured data regardless of LLM text.
-        """
+        """Stream response tokens, yielding sentinel-prefixed chunks for viz/clarification data."""
         _VIZ_SENTINEL = "__VIZ_DATA__"
         _CLARIFICATION_SENTINEL = "__CLARIFICATION__"
 
-        # --- Semantic cache lookup (only for data queries) ---
+        # --- Semantic cache lookup + session load in parallel ---
         cache = _get_semantic_cache(self.settings)
         embedding: list[float] | None = None
-        is_data_query = _resolve_tool_choice(message) == "required"
+        is_data_query = True
 
+        # Run embedding and session preparation concurrently to save ~0.5s
+        embed_task = None
         if cache and is_data_query:
+            embed_task = asyncio.create_task(cache.embed_async(message))
+
+        agent, thread, result_holder = await self._prepare_agent_and_thread(user_id)
+        await self._maybe_compact(user_id, thread)
+
+        # Now await the embedding result and check cache
+        if embed_task is not None:
             try:
-                embedding = cache.embed(message)
-                cached_result, score = cache.search(embedding)
+                embedding = await embed_task
+                cached_result, score = cache.search(embedding, query_text=message)
                 if cached_result is not None:
                     logger.info(
                         "[SEMANTIC CACHE] STREAM HIT (score=%.3f) for: %s",
                         score, message[:60],
                     )
-                    # Yield cached text
                     cached_text = cached_result.get("text", "")
                     if cached_text:
                         yield cached_text
-                    # Yield cached viz data
                     cached_viz = cached_result.get("viz_data")
                     if cached_viz and cached_viz.get("visualization"):
                         yield _VIZ_SENTINEL + json.dumps(
@@ -366,9 +443,6 @@ class ChatV2Agent:
                     return
             except Exception:
                 logger.warning("Semantic cache stream lookup failed", exc_info=True)
-
-        agent, thread, result_holder = await self._prepare_agent_and_thread(user_id)
-        await self._maybe_compact(user_id, thread)
 
         # If previous turn was a clarification, the cache key should be the
         # ORIGINAL question (Turn 1), not this clarification answer (Turn 2).
@@ -417,21 +491,52 @@ class ChatV2Agent:
                     last_exc = exc
                     collected_text.clear()
                     continue
+                # Corrupted thread → reset session and retry once
+                if _is_invalid_message_error(exc) and attempt == 0:
+                    logger.warning(
+                        "Corrupted thread detected for user=%s, resetting session: %s",
+                        user_id, exc,
+                    )
+                    thread = agent.get_new_thread()
+                    _session_store.set(
+                        user_id, thread, agent=agent,
+                        result_holder=result_holder,
+                    )
+                    await _session_store.delete_from_db(self.settings, user_id)
+                    collected_text.clear()
+                    continue
+                # SSE parse error (malformed JSON from API) → retry
+                if isinstance(exc, json.JSONDecodeError) and attempt < _RATE_LIMIT_MAX_RETRIES:
+                    logger.warning(
+                        "SSE parse error on attempt %d, retrying: %s",
+                        attempt + 1, exc,
+                    )
+                    collected_text.clear()
+                    last_exc = exc
+                    continue
                 logger.exception("agent.run_stream() failed for user=%s", user_id)
                 raise
         if last_exc is not None:
-            logger.error("All %d stream rate-limit retries exhausted", _RATE_LIMIT_MAX_RETRIES)
+            logger.error("All %d stream retries exhausted", _RATE_LIMIT_MAX_RETRIES)
             raise last_exc
 
-        # Yield clarification if the agent asked for it
+        # Safety net: if the agent produced no text and no clarification/viz,
+        # yield a fallback message so the user isn't left with a blank screen.
         clarif = result_holder.get("clarification")
+        viz = result_holder.get("viz") or viz_result_ctx.get()
+        if not collected_text and not (clarif and clarif.get("clarification")) and not (viz and viz.get("visualization")):
+            fallback = "Lo siento, no pude generar una respuesta. Por favor intenta reformular tu pregunta."
+            logger.warning("[STREAM] 0 chunks produced — yielding fallback message")
+            yield fallback
+            collected_text.append(fallback)
+
+        # Yield clarification if the agent asked for it
         if clarif and clarif.get("clarification"):
             # Save the original question so Turn 2 can use it as cache key
             result_holder["_pending_cache_question"] = cache_key_question
             yield _CLARIFICATION_SENTINEL + json.dumps(clarif, ensure_ascii=False)
 
-        # Yield viz data (primary: mutable holder, fallback: ContextVar)
-        viz = result_holder.get("viz") or viz_result_ctx.get()
+        # Yield viz data (already resolved above)
         if viz and viz.get("visualization"):
             yield _VIZ_SENTINEL + json.dumps(viz, ensure_ascii=False, default=str)
 
@@ -447,6 +552,7 @@ class ChatV2Agent:
                     question=cache_key_question,
                     result={"text": full_text, "viz_data": viz},
                     embedding=cache_embedding,
+                    sql_tables=_extract_sql_tables(viz.get("sql_query", "")),
                 )
                 logger.info(
                     "[SEMANTIC CACHE] Stored with key: %s", cache_key_question[:60],

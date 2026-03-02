@@ -29,7 +29,6 @@ class SQLGenerator:
     """Generates SQL queries from natural language."""
 
     def __init__(self, settings: Settings):
-        """Initialize SQL generator."""
         self.settings = settings
         logger.info("SQLGenerator initialized with model: %s", settings.sql_agent_model)
 
@@ -74,25 +73,7 @@ class SQLGenerator:
         system_prompt_override: str | None = None,
         sub_type: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Generate SQL query from natural language.
-
-        Args:
-            message: User's natural language question
-            schema_context: Optional schema context with tables and schema info
-            intent: Optional intent classification
-            pattern_type: Optional pattern type
-            arquetipo: Optional archetype (A-K)
-            temporality: Optional temporality ("temporal" or "estatico")
-            previous_errors: Optional list of validation errors from previous attempt
-            previous_sql: Optional SQL query from previous attempt that failed
-            db_tools: Optional DelfosTools instance for direct DB access
-            system_prompt_override: Optional pre-built system prompt (e.g. enriched by pattern hooks)
-            sub_type: Optional sub-type for cache key differentiation
-
-        Returns:
-            Dictionary with SQL query and metadata
-        """
+        """Generate SQL query from natural language."""
         try:
             # Only use cache for first attempt (no previous errors)
             use_cache = not previous_errors

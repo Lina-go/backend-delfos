@@ -1,4 +1,4 @@
-"""Main pipeline orchestrator."""
+"""Main NL2SQL pipeline orchestrator."""
 
 import json
 import logging
@@ -54,10 +54,9 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineOrchestrator:
-    """Orchestrates the complete NL2SQL pipeline."""
+    """Complete NL2SQL pipeline orchestrator."""
 
     def __init__(self, settings: Settings):
-        """Initialize orchestrator with settings."""
         self.settings = settings
         self.triage = TriageClassifier(settings)
         self.greeting_handler = GreetingHandler()
@@ -129,7 +128,6 @@ class PipelineOrchestrator:
         self.viz = VisualizationService(settings, db_tools=self.db_tools)
 
     async def close(self) -> None:
-        """Close all service connections and cleanup resources."""
         try:
             if self.db_tools is not None:
                 self.db_tools.close()
@@ -138,11 +136,9 @@ class PipelineOrchestrator:
             logger.error("Error closing pipeline resources: %s", e, exc_info=True)
 
     async def __aenter__(self) -> "PipelineOrchestrator":
-        """Enter the async context manager."""
         return self
 
     async def __aexit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Exit the async context manager, ensuring resources are cleaned up."""
         try:
             await self.close()
         except Exception as cleanup_error:
@@ -155,20 +151,7 @@ class PipelineOrchestrator:
         title: str,
         user_id: str,
     ) -> dict[str, Any]:
-        """Re-execute a saved query and regenerate its visualization.
-
-        Reuses the same services as the main pipeline (steps 5, 7, 8)
-        without triage, intent, schema, or SQL generation.
-
-        Args:
-            sql: The stored SQL query to re-execute.
-            chart_type: Chart type (pie, bar, line, stackedbar).
-            title: Graph title.
-            user_id: User identifier.
-
-        Returns:
-            Dict with new content URL, row_count, and graph metadata.
-        """
+        """Re-execute a saved query and regenerate its chart."""
         exec_result = await self.sql_exec.execute(sql, db_tools=self.db_tools)
         if not exec_result.get("resultados"):
             return {"error": f"Query returned no results: {exec_result.get('resumen', '')}"}
@@ -199,7 +182,7 @@ class PipelineOrchestrator:
         conversation_history: str | None = None,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
-        """Execute triage step with context awareness."""
+        """Run the triage classification step."""
         triage_prompt = build_triage_system_prompt(
             has_context=has_context,
             context_summary=context_summary,
@@ -239,7 +222,7 @@ class PipelineOrchestrator:
         message: str,
         context: ConversationContext | None = None,
     ) -> dict[str, Any]:
-        """Execute intent classification step."""
+        """Run the intent classification step."""
         intent_message = message
         if context and context.last_query and context.last_temporality:
             intent_message = (
@@ -260,7 +243,6 @@ class PipelineOrchestrator:
             state.titulo_grafica = intent_result.get("titulo_grafica")
             state.is_tasa = intent_result.get("is_tasa", False)
 
-            # Parse and validate sub_type
             sub_type_enum = get_subtype_from_string(state.sub_type)
             if sub_type_enum is None:
                 logger.warning(
@@ -269,7 +251,6 @@ class PipelineOrchestrator:
                 sub_type_enum = SubType.VALOR_PUNTUAL
                 state.sub_type = sub_type_enum.value
 
-            # Auto-populate legacy fields for backward compatibility
             state.arquetipo = get_archetype_name(get_legacy_archetype(sub_type_enum))
             state.viz_required = state.intent == "requiere_visualizacion"
             state.temporality = get_temporality(sub_type_enum)
@@ -277,7 +258,6 @@ class PipelineOrchestrator:
 
             ctx.set_result(intent_result)
 
-        # Gate: blocked sub_types get a "not supported" response
         if is_blocked(sub_type_enum):
             response = self._format_non_comparacion_response(state, intent_result)
             self.session_logger.end_session(
@@ -295,7 +275,7 @@ class PipelineOrchestrator:
         message: str,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
-        """Execute schema selection step."""
+        """Run the schema selection step."""
         async with timed_step(
             PipelineStep.SCHEMA, self.session_logger, "SchemaService",
             input_text=message,
@@ -313,17 +293,10 @@ class PipelineOrchestrator:
         db_tools: DelfosTools | None = None,
         hooks=None,
     ) -> dict[str, Any] | None:
-        """Execute visualization step.
-
-        Separated flow:
-          1. LLM mapping (viz service — only columns + 3 sample rows)
-          2. Data point building (code — all rows)
-          3. DB insert (direct — all data_points)
-        """
+        """Run visualization: LLM mapping, data point building, and DB insert."""
         if not (state.viz_required and state.sql_results):
             return None
 
-        # Hook: chart type override (e.g., relacion → scatter)
         if hooks and hooks.get_chart_type:
             state.tipo_grafico = hooks.get_chart_type(state.sub_type)
         else:
@@ -343,14 +316,12 @@ class PipelineOrchestrator:
         rows = state.sql_results or []
         n = len(rows)
 
-        # Spaced sample rows to capture diverse values (e.g., different entities)
         if n <= 5:
             sample_rows = rows
         else:
             step = max(1, n // 5)
             sample_rows = [rows[i * step] for i in range(min(5, n))]
 
-        # Column stats: unique values per column for LLM cardinality awareness
         max_unique_shown = 15
         column_stats: dict[str, Any] = {}
         for col in columns:
@@ -381,7 +352,6 @@ class PipelineOrchestrator:
             input_text=json.dumps(viz_input, indent=2, ensure_ascii=False),
             system_prompt=viz_prompt,
         ) as ctx:
-            # 1. LLM mapping (spaced sample + column stats)
             mapping = await self.viz.get_mapping(
                 columns, sample_rows, message,
                 chart_type=state.tipo_grafico, sub_type=state.sub_type,
@@ -391,7 +361,6 @@ class PipelineOrchestrator:
                 ctx.set_result({"error": "Column mapping failed"})
                 return None
 
-            # 2. Build data_points by code (all rows)
             if hooks and hooks.build_data_points:
                 data_points = hooks.build_data_points(state.sql_results, mapping)
                 logger.info("Hook formatted %s data points", len(data_points))
@@ -405,7 +374,6 @@ class PipelineOrchestrator:
                 )
                 logger.info("After category limiting: %s data points", len(data_points))
 
-            # 3. DB insert
             run_id = None
             powerbi_url = None
             if self.db_tools is not None:
@@ -423,7 +391,31 @@ class PipelineOrchestrator:
                         visual_hint=state.tipo_grafico or "barras",
                     )
 
-            # 4. Update state
+            indicators: list[dict[str, Any]] = []
+            indicator_specs: list[dict[str, Any]] = []
+            if data_points and state.sub_type in ("tendencia_simple", "tendencia_comparada"):
+                from src.services.chat_v2.indicators import (
+                    compute_series_stats,
+                    ensure_minimum_indicators,
+                    resolve_indicators,
+                )
+
+                series_stats = compute_series_stats(data_points)
+                # Merge LLM specs + Python-guaranteed minimums
+                final_specs = ensure_minimum_indicators(
+                    mapping.indicators or [],
+                    series_stats,
+                    state.sub_type or "",
+                    is_tasa=state.is_tasa,
+                )
+                indicator_specs = [s.model_dump() for s in final_specs]
+                indicators = resolve_indicators(series_stats, final_specs)
+                if indicators:
+                    logger.info("[INDICATORS V1] %d indicators resolved for %s (LLM=%d, guaranteed=%d)",
+                                len(indicators), state.sub_type,
+                                len(mapping.indicators or []),
+                                len(final_specs) - len(mapping.indicators or []))
+
             state.data_points = data_points
             state.metric_name = mapping.metric_name
             state.x_axis_name = mapping.x_axis_name
@@ -432,6 +424,8 @@ class PipelineOrchestrator:
             state.category_name = mapping.category_name
             state.powerbi_url = powerbi_url
             state.run_id = run_id
+            state.indicators = indicators
+            state.indicator_specs = indicator_specs
 
             viz_result = {
                 "tipo_grafico": state.tipo_grafico,
@@ -441,6 +435,8 @@ class PipelineOrchestrator:
                 "series_name": mapping.series_name,
                 "category_name": mapping.category_name,
                 "data_points": data_points,
+                "indicators": indicators,
+                "indicator_specs": indicator_specs,
                 "powerbi_url": powerbi_url,
                 "run_id": run_id,
             }
@@ -448,7 +444,7 @@ class PipelineOrchestrator:
         return viz_result
 
     async def _step_format(self, state: PipelineState) -> dict[str, Any]:
-        """Execute response formatting step."""
+        """Run the response formatting step."""
         format_prompt = build_format_prompt() if self.settings.use_llm_formatting else None
         format_input = json.dumps(
             {
@@ -470,7 +466,7 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _build_sql_message(message: str, context: ConversationContext) -> str:
-        """Enriquecer mensaje con contexto de conversacion para preguntas de seguimiento."""
+        """Enrich message with conversation context for follow-up questions."""
         if not context.last_query:
             return message
 
@@ -502,16 +498,7 @@ class PipelineOrchestrator:
         return "\n".join(parts)
 
     async def process(self, message: str, user_id: str) -> dict[str, Any]:
-        """
-        Process a user message through the complete pipeline.
-
-        Args:
-            message: User's natural language question
-            user_id: User identifier
-
-        Returns:
-            Formatted response dictionary
-        """
+        """Process a user message through the full pipeline."""
         state = PipelineState(user_message=message, user_id=user_id)
         errors: list[str] = []
 
@@ -529,7 +516,6 @@ class PipelineOrchestrator:
                     len(context.last_results or []),
                 )
 
-            # Record user turn in history BEFORE processing
             ConversationStore.add_turn(
                 user_id, "user", message,
                 max_history_turns=self.settings.max_history_turns,
@@ -543,7 +529,6 @@ class PipelineOrchestrator:
 
             handler_response = await self.handler_router.route(state, message, user_id, context)
             if handler_response is not None:
-                # Record assistant turn for handler responses
                 response_text = handler_response.get("insight") or handler_response.get("clarification_question") or ""
                 ConversationStore.add_turn(
                     user_id, "assistant", response_text,
@@ -560,7 +545,6 @@ class PipelineOrchestrator:
 
             intent_result = await self._step_intent(state, message, context=context)
             if state.pattern_type not in ("comparacion", "relacion"):
-                # Record assistant turn for non-comparacion
                 ConversationStore.add_turn(
                     user_id, "assistant", intent_result.get("reasoning", ""),
                     query_type=state.query_type,
@@ -589,7 +573,6 @@ class PipelineOrchestrator:
                 )
                 return sql_error
 
-            # Post-process hook (e.g., correlation stats for relacion)
             if hooks.post_process and state.sql_results:
                 try:
                     hooks.post_process(state.sql_results, state)
@@ -617,7 +600,6 @@ class PipelineOrchestrator:
                 temporality=state.temporality,
             )
 
-            # Record assistant turn for data queries
             ConversationStore.add_turn(
                 user_id, "assistant", final_response.get("insight", ""),
                 query_type=state.query_type,
@@ -646,16 +628,7 @@ class PipelineOrchestrator:
     async def process_stream(
         self, message: str, user_id: str
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """
-        Process a user message through the complete pipeline with streaming events.
-
-        Args:
-            message: User's natural language question
-            user_id: User identifier
-
-        Yields:
-            Event dictionaries with step results
-        """
+        """Process a user message, yielding step events for SSE streaming."""
         state = PipelineState(user_message=message, user_id=user_id)
         errors: list[str] = []
 
@@ -673,7 +646,6 @@ class PipelineOrchestrator:
                     len(context.last_results or []),
                 )
 
-            # Record user turn in history BEFORE processing
             ConversationStore.add_turn(
                 user_id, "user", message,
                 max_history_turns=self.settings.max_history_turns,
@@ -692,7 +664,6 @@ class PipelineOrchestrator:
 
             handler_response = await self.handler_router.route(state, message, user_id, context)
             if handler_response is not None:
-                # Record assistant turn for handler responses
                 response_text = handler_response.get("insight") or handler_response.get("clarification_question") or ""
                 ConversationStore.add_turn(
                     user_id, "assistant", response_text,
@@ -720,7 +691,6 @@ class PipelineOrchestrator:
                 },
             }
             if state.pattern_type not in ("comparacion", "relacion"):
-                # Record assistant turn for non-comparacion
                 ConversationStore.add_turn(
                     user_id, "assistant", intent_result.get("reasoning", ""),
                     query_type=state.query_type,
@@ -760,7 +730,6 @@ class PipelineOrchestrator:
                     yield {"step": "complete", "response": sql_event["result"]}
                     return
 
-            # Post-process hook (e.g., correlation stats for relacion)
             if hooks.post_process and state.sql_results:
                 try:
                     hooks.post_process(state.sql_results, state)
@@ -781,14 +750,12 @@ class PipelineOrchestrator:
                     },
                 }
 
-            # Step: FORMAT
             final_response = await self._step_format(state)
             yield {
                 "step": "format",
                 "result": final_response,
             }
 
-            # Save context for follow-up questions
             ConversationStore.update(
                 user_id=user_id,
                 query=message,
@@ -804,7 +771,6 @@ class PipelineOrchestrator:
                 temporality=state.temporality,
             )
 
-            # Record assistant turn for data queries
             ConversationStore.add_turn(
                 user_id, "assistant", final_response.get("insight", ""),
                 query_type=state.query_type,
@@ -833,11 +799,7 @@ class PipelineOrchestrator:
     _TEMPORAL_COLUMNS = {"year", "month", "fecha", "periodo", "date"}
 
     def _guard_stacked_bar(self, rows: list[dict[str, Any]] | None) -> ChartType:
-        """Validate that data has a categorical column for stacking.
-
-        Stacked bar charts need at least one non-temporal string column.
-        Falls back to LINE when the data is purely numeric.
-        """
+        """Fall back to LINE chart if no categorical column exists for stacking."""
         if not rows:
             return ChartType.STACKED_BAR
 
@@ -855,7 +817,7 @@ class PipelineOrchestrator:
     def _format_non_data_response(
         self, state: PipelineState, triage_result: dict[str, Any]
     ) -> dict[str, Any]:
-        """Format response for non-data questions (general, out_of_scope)."""
+        """Format response for non-data questions."""
         query_type_str = state.query_type or QueryType.GENERAL
         try:
             query_type = QueryType(query_type_str)
@@ -870,7 +832,7 @@ class PipelineOrchestrator:
     def _format_non_comparacion_response(
         self, state: PipelineState, intent_result: dict[str, Any]
     ) -> dict[str, Any]:
-        """Format response for non-comparacion questions."""
+        """Format response for unsupported question types."""
         reasoning = intent_result.get(
             "reasoning",
             "Este tipo de pregunta aun no esta soportada. Por favor, ingrese una pregunta de comparacion.",

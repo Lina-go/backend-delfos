@@ -15,11 +15,6 @@ class SchemaService:
     """Service for schema extraction and enrichment."""
 
     def __init__(self, settings: Settings):
-        """Initialize schema service.
-
-        Args:
-            settings: Application settings
-        """
         self.settings = settings
         self.table_selector = TableSelector(settings)
 
@@ -28,16 +23,7 @@ class SchemaService:
         message: str,
         db_tools: DelfosTools | None = None,
     ) -> dict[str, Any]:
-        """
-        Get schema context for SQL generation.
-
-        Args:
-            message: User's natural language question
-            db_tools: Optional DelfosTools instance for direct DB access
-
-        Returns:
-            Dictionary with tables array
-        """
+        """Get schema context for SQL generation."""
         try:
             # Select relevant tables
             tables = await self.table_selector.select_tables(message)

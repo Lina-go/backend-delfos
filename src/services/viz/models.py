@@ -2,9 +2,11 @@
 
 from pydantic import BaseModel, Field
 
+from src.services.chat_v2.models import IndicatorSpec
+
 
 class VizColumnMapping(BaseModel):
-    """Lightweight LLM response: column mappings + labels only (no data_points)."""
+    """LLM-generated column mappings and labels for visualization."""
 
     x_column: str = Field(description="Nombre exacto de la columna SQL para el eje X")
     y_column: str = Field(description="Nombre exacto de la columna SQL para el eje Y (valores numéricos)")
@@ -28,3 +30,8 @@ class VizColumnMapping(BaseModel):
     y_axis_name: str = Field(description="Etiqueta del eje Y en español")
     series_name: str | None = Field(default=None, description="Nombre de la serie en español")
     category_name: str | None = Field(default=None, description="Nombre de la categoría en español")
+
+    indicators: list[IndicatorSpec] = Field(
+        default_factory=list,
+        description="KPI indicators for tendencia charts (as many as relevant). Empty for other chart types.",
+    )

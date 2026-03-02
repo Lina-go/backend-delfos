@@ -1,4 +1,4 @@
-"""Agent executor for running agents in isolation."""
+"""Agent execution with retry and structured response parsing."""
 
 import asyncio
 import logging
@@ -20,7 +20,7 @@ _LLM_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT)
 
 
 async def _execute_with_retry(agent: Any, input_text: str) -> Any:
-    """Run an agent under semaphore with retry logic."""
+    """Run an agent under the concurrency semaphore with retry."""
 
     async def _run() -> Any:
         async with _LLM_SEMAPHORE:
@@ -49,12 +49,7 @@ def _try_parse_response(text: str, response_format: type[T]) -> T | None:
 async def _prefill_json_retry(
     agent: Any, narrative: str, response_format: type[T]
 ) -> T | None:
-    """Use Anthropic prefill technique to force JSON output.
-
-    Passes the agent's narrative response as context, then prefills
-    with '{' to force Claude to output JSON immediately.
-    See: how_to_enable_json_mode.ipynb
-    """
+    """Retry with Anthropic prefill technique to force JSON output."""
     messages = [
         ChatMessage(
             role="user",
@@ -77,7 +72,7 @@ async def _prefill_json_retry(
 
 
 async def run_single_agent(agent: Any, input_text: str) -> str:
-    """Run a single agent in isolation using its native ``run`` method."""
+    """Run a single agent and return its text response."""
     response = await _execute_with_retry(agent, input_text)
     logger.info("Agent Response Text: %s", response.text)
     return str(response.text)
@@ -88,7 +83,7 @@ async def run_agent_with_format(
     input_text: str,
     response_format: type[T] | None = None,
 ) -> T | str:
-    """Run an agent and parse its response into a Pydantic model."""
+    """Run an agent and parse its response into a Pydantic model, with prefill fallback."""
     response = await _execute_with_retry(agent, input_text)
 
     logger.info("Raw agent response: %s", response.text)

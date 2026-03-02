@@ -1,4 +1,4 @@
-"""MCP connection manager."""
+"""MCP connection manager and client for agent tool calls."""
 
 import logging
 from collections.abc import AsyncIterator, Collection
@@ -19,25 +19,7 @@ async def mcp_connection(
     name: str = "delfos-mcp",
     allowed_tools: Collection[str] | None = None,
 ) -> AsyncIterator[MCPStreamableHTTPTool]:
-    """
-    MCP connection as context manager for agent tools.
-
-    Usage:
-        async with mcp_connection(settings) as mcp:
-            agent = client.create_agent(name="SQL", tools=mcp, ...)
-
-        # With filtered tools:
-        async with mcp_connection(settings, allowed_tools=["list_tables", "get_table_schema"]) as mcp:
-            agent = client.create_agent(name="SQL", tools=mcp, ...)
-
-    Args:
-        settings: Application settings
-        name: Name for the MCP tool
-        allowed_tools: Optional list of tool names to allow. If None, all tools are available.
-
-    Yields:
-        MCPStreamableHTTPTool instance ready to use as agent tool
-    """
+    """Yield an MCPStreamableHTTPTool connected to the configured MCP server."""
     async with MCPStreamableHTTPTool(
         name=name,
         url=settings.mcp_server_url,
@@ -56,52 +38,25 @@ async def mcp_connection(
 
 
 class MCPClient:
-    """
-    Manages MCP connections and direct tool calls.
-
-    Usage as context manager (recommended):
-        async with MCPClient(settings) as client:
-            results = await client.execute_sql("SELECT ...")
-            schema = await client.get_table_schema("table_name")
-
-    Or with existing connection (from mcp_connection context manager):
-        async with mcp_connection(settings) as mcp:
-            client = MCPClient.from_connection(mcp)
-            results = await client.execute_sql("SELECT ...")
-    """
+    """Async MCP client for direct database tool calls."""
 
     def __init__(self, settings: Settings):
-        """Initialize MCP client.
-
-        Args:
-            settings: Application settings containing MCP configuration
-        """
         self.settings: Settings | None = settings
         self._mcp: MCPStreamableHTTPTool | None = None
         self._owns_connection: bool = True
 
     async def __aenter__(self) -> "MCPClient":
-        """Enter context manager - establish connection."""
         if self._mcp is None and self.settings:
             await self.connect()
         return self
 
     async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> bool:
-        """Exit context manager - close connection."""
         await self.close()
         return False
 
     @classmethod
     def from_connection(cls, mcp: MCPStreamableHTTPTool) -> "MCPClient":
-        """
-        Create client from existing MCP connection.
-
-        Args:
-            mcp: Active MCP connection from context manager
-
-        Returns:
-            MCPClient instance that uses the provided connection
-        """
+        """Create a client wrapping an existing MCP connection."""
         instance = cls.__new__(cls)
         instance.settings = None
         instance._mcp = mcp
@@ -110,15 +65,11 @@ class MCPClient:
 
     @property
     def tools(self) -> MCPStreamableHTTPTool | None:
-        """Get raw MCP tool for passing to agents.
-
-        Returns:
-            MCPStreamableHTTPTool instance if connected, None otherwise
-        """
+        """Return the underlying MCP tool instance, or None if not connected."""
         return self._mcp
 
     async def connect(self) -> None:
-        """Establish MCP connection."""
+        """Establish the MCP connection if not already connected."""
         if self._mcp is None and self.settings is not None:
             logger.debug("Connecting to MCP server at %s", self.settings.mcp_server_url)
             self._mcp = MCPStreamableHTTPTool(
@@ -138,14 +89,7 @@ class MCPClient:
             await self.connect()
 
     def _extract_text_content(self, result: list[Any]) -> str:
-        """Extract text content from MCP tool result.
-
-        Args:
-            result: List of content items from MCP tool call
-
-        Returns:
-            Combined text content from all TextContent items
-        """
+        """Join all TextContent items from an MCP tool result."""
         text_parts = []
         for content in result:
             if isinstance(content, TextContent) and content.text:
@@ -153,7 +97,7 @@ class MCPClient:
         return "\n".join(text_parts)
 
     async def _call_tool(self, tool_name: str, **kwargs: Any) -> str:
-        """Execute MCP tool with standard connection check and error handling."""
+        """Execute an MCP tool and return its text content."""
         await self._ensure_connected()
         if self._mcp is None:
             raise RuntimeError("MCP connection is not established")
@@ -170,14 +114,7 @@ class MCPClient:
             ) from e
 
     async def list_tables(self) -> list[str]:
-        """List all tables in the database.
-
-        Returns:
-            List of table names
-
-        Raises:
-            ToolExecutionException: If the MCP tool call fails
-        """
+        """List all tables in the database."""
         text = await self._call_tool("list_tables")
 
         if not text or "No tables found" in text:
@@ -188,17 +125,7 @@ class MCPClient:
         return tables
 
     async def get_table_schema(self, table_name: str) -> dict[str, Any]:
-        """Get schema for a specific table.
-
-        Args:
-            table_name: Name of the table to get schema for
-
-        Returns:
-            Dictionary containing table schema information
-
-        Raises:
-            ToolExecutionException: If the MCP tool call fails
-        """
+        """Return ``{name, columns: [{name, type}]}`` for a table."""
         if not table_name:
             raise ValueError("table_name is required")
 
@@ -222,18 +149,7 @@ class MCPClient:
         return {"name": table_name, "columns": columns}
 
     async def execute_sql(self, sql: str) -> dict[str, Any]:
-        """Execute SQL query via MCP.
-
-        Args:
-            sql: SQL query string to execute
-
-        Returns:
-            Dictionary containing query results
-
-        Note:
-            For critical errors (connection issues, invalid tool calls),
-            exceptions are still raised. The "error" field is for SQL execution errors.
-        """
+        """Execute a SQL query via MCP and return a structured result dict."""
         if not sql or not sql.strip():
             raise ValueError("SQL query cannot be empty")
 
@@ -257,11 +173,7 @@ class MCPClient:
         metric_name: str,
         visual_hint: str,
     ) -> str:
-        """Insert visualization data into agent_output table.
-
-        Returns:
-            str: The run_id generated for this batch
-        """
+        """Insert visualization data and return the generated run_id."""
         logger.debug("Inserting %s data points for user %s", len(results), user_id)
 
         run_id = await self._call_tool(
@@ -280,11 +192,7 @@ class MCPClient:
         run_id: str,
         visual_hint: str,
     ) -> str:
-        """Generate Power BI URL for visualization.
-
-        Returns:
-            str: Complete Power BI URL
-        """
+        """Generate a Power BI report URL filtered by run_id."""
         logger.debug("Generating Power BI URL for run_id: %s", run_id)
 
         powerbi_url = await self._call_tool(
@@ -296,7 +204,7 @@ class MCPClient:
         return powerbi_url
 
     async def close(self) -> None:
-        """Close MCP connection (only if we own it)."""
+        """Close the MCP connection if owned by this client."""
         if self._mcp and self._owns_connection:
             logger.debug("Closing MCP connection")
             try:

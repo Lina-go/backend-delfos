@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     advisor_max_tokens: int = 4096
     advisor_temperature: float = 0.3
 
+    # Graph Bullets
+    graph_bullets_model: str = "gpt-4o-mini"
+    graph_bullets_max_tokens: int = 60
+    graph_bullets_temperature: float = 0.2
+
     # Chat V2 Agent
     chat_v2_agent_model: str = "claude-sonnet-4-5"
     chat_v2_max_tokens: int = 1024
@@ -141,9 +146,9 @@ class Settings(BaseSettings):
     chat_v2_classifier_model: str = "claude-sonnet-4-5"
 
     # Chat V2 Compaction (session memory)
-    chat_v2_compaction_soft_threshold: int = 20
-    chat_v2_compaction_hard_threshold: int = 40
-    chat_v2_compaction_keep_recent: int = 4
+    chat_v2_compaction_soft_threshold: int = 60
+    chat_v2_compaction_hard_threshold: int = 100
+    chat_v2_compaction_keep_recent: int = 6
     chat_v2_compaction_model: str = "gpt-4o-mini"
 
     # Semantic Cache (Azure OpenAI Embeddings)

@@ -1,19 +1,11 @@
-"""Text processing utilities."""
+"""Text normalization and date parsing utilities."""
 
 import re
 from datetime import datetime
 
 
 def normalize_text(text: str) -> str:
-    """
-    Normalize text for processing.
-
-    Args:
-        text: Input text
-
-    Returns:
-        Normalized text
-    """
+    """Collapse whitespace and strip leading/trailing spaces."""
     # Remove extra whitespace
     text = re.sub(r"\s+", " ", text)
     # Trim
@@ -22,15 +14,7 @@ def normalize_text(text: str) -> str:
 
 
 def parse_date(date_str: str) -> datetime | None:
-    """
-    Parse date string to datetime.
-
-    Args:
-        date_str: Date string
-
-    Returns:
-        Datetime object or None
-    """
+    """Parse a date string using common formats, returning None on failure."""
     try:
         # Try common date formats
         formats = [

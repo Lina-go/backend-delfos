@@ -1,4 +1,4 @@
-"""Embedding-based table selector using OpenAI embeddings."""
+"""Embedding-based table selector."""
 
 import logging
 from typing import Any
@@ -45,12 +45,7 @@ def _build_table_text(table_name: str) -> str:
 
 
 class EmbeddingTableSelector:
-    """Selects tables using embedding similarity.
-
-    Pre-computes embeddings for all tables at first use.
-    At query time, embeds the user question and returns tables
-    ranked by cosine similarity above a threshold.
-    """
+    """Selects tables using embedding similarity."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -59,10 +54,7 @@ class EmbeddingTableSelector:
         self._initialized = False
 
     async def _ensure_initialized(self) -> bool:
-        """Lazily initialize OpenAI client and compute table embeddings.
-
-        Returns True if initialization succeeded, False otherwise.
-        """
+        """Lazily initialize OpenAI client and compute table embeddings."""
         if self._initialized:
             return bool(self._table_embeddings)
 
@@ -106,15 +98,7 @@ class EmbeddingTableSelector:
             return False
 
     async def select_tables(self, message: str) -> list[tuple[str, float]]:
-        """Select tables by embedding similarity.
-
-        Args:
-            message: User's natural language question
-
-        Returns:
-            List of (table_name, similarity_score) tuples,
-            sorted by score descending, filtered by threshold.
-        """
+        """Select tables by embedding similarity, ranked by cosine score."""
         if not await self._ensure_initialized():
             return []
 
